@@ -1,0 +1,41 @@
+{
+  "name": "bulk-label-studio",
+  "version": "1.0.0",
+  "description": "Bulk label designer and Xprinter desktop printing app",
+  "main": "src/main.js",
+  "scripts": {
+    "start": "electron .",
+    "build": "electron-builder --win --x64"
+  },
+  "build": {
+    "appId": "com.bulklabel.studio",
+    "productName": "Bulk Label Studio",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "src/**/*",
+      "tools/**/*",
+      "package.json"
+    ],
+    "asarUnpack": [
+      "tools/**/*"
+    ],
+    "win": {
+      "target": [
+        "nsis"
+      ],
+      "artifactName": "Bulk-Label-Studio-Setup-${version}.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true
+    }
+  },
+  "devDependencies": {
+    "electron": "^44.4.1",
+    "electron-builder": "^26.0.12"
+  }
+}

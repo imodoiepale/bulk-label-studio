@@ -1,0 +1,216 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Bulk Label Studio</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <aside class="sidebar">
+    <div class="brand">
+      <div class="mark">BL</div>
+      <div>
+        <h1>Bulk Label</h1>
+        <p>Label Studio</p>
+      </div>
+    </div>
+    <nav>
+      <button class="nav active" data-page="designer">Designer</button>
+      <button class="nav" data-page="bulk">Bulk Data</button>
+      <button class="nav" data-page="printer">Printer Config</button>
+      <button class="nav" data-page="xml">XML Editor</button>
+      <button class="nav" data-page="assets">Designs</button>
+      <button class="nav" data-page="settings">Settings</button>
+    </nav>
+    <div class="status-pill" id="saveStatus">Ready</div>
+  </aside>
+
+  <main>
+    <header class="topbar">
+      <div>
+        <h2 id="pageTitle">Visual Designer</h2>
+        <p id="pageSub">Drag label elements, edit text fields, save templates, and print tests.</p>
+      </div>
+      <div class="actions">
+        <button id="openDataBtn" class="ghost">Open Memory</button>
+        <button id="saveTemplateBtn" class="ghost">Save Template</button>
+        <button id="paperPreviewBtn" class="ghost">Paper Preview</button>
+        <button id="printTestBtn" class="primary">Print Test</button>
+      </div>
+    </header>
+
+    <section id="designer" class="page active">
+      <div class="workspace">
+        <section class="panel left-tools">
+          <h3>Template</h3>
+          <select id="templateSelect"></select>
+          <label>Name <input id="templateName"></label>
+          <div class="grid-2">
+            <label>Width mm <input id="templateWidth" type="number" step="0.1"></label>
+            <label>Height mm <input id="templateHeight" type="number" step="0.1"></label>
+            <label>Pitch mm <input id="templatePitch" type="number" step="0.1"></label>
+            <label>Gap mm <input id="templateGap" type="number" step="0.1"></label>
+          </div>
+          <h3>Elements</h3>
+          <button id="addTextBtn">Add Text</button>
+          <button id="addBarcodeBtn">Add Barcode</button>
+          <button id="autoFitBtn">Auto Fit Label</button>
+          <div id="elementList" class="element-list"></div>
+        </section>
+
+        <section class="canvas-wrap">
+          <div class="production-strip">
+            <div>
+              <strong>Production workflow</strong>
+              <span id="productionSummary">1 sample label ready</span>
+            </div>
+            <div class="production-actions">
+              <label class="copies-control">Copies <input id="designCopies" type="number" min="1" max="10000" value="5"></label>
+              <button id="bulkEditBtn">Bulk Edit</button>
+              <button id="calibrateFromDesignerBtn">Recalibrate Sensor</button>
+              <button id="designerPreviewBtn">Preview Paper</button>
+              <button id="startPrintBtn" class="primary">Start Print Process</button>
+            </div>
+          </div>
+          <div class="ruler">Paper-accurate preview, 203 dpi TSPL coordinates, label boundary and gap shown</div>
+          <canvas id="labelCanvas" width="635" height="381"></canvas>
+          <section class="panel designer-bulk" id="designerBulkPanel">
+            <div class="panel-head">
+              <h3>Bulk Edit Data</h3>
+              <button id="closeBulkEditBtn">Close</button>
+            </div>
+            <textarea id="designerBulkText">code	reference	amount	title	quantity
+12345678	CU10000 - 094	KES 10,000/-	VALID FOR 3 MONTHS ONLY	5</textarea>
+            <div class="row-actions">
+              <button id="designerParseRowsBtn">Preview Rows</button>
+              <button id="designerPrintRowsBtn" class="primary">Print These Rows</button>
+            </div>
+            <div id="designerRowPreview" class="table-preview compact"></div>
+          </section>
+        </section>
+
+        <section class="panel properties">
+          <h3>Properties</h3>
+          <label>Label <input id="elLabel"></label>
+          <label>Type <input id="elType" disabled></label>
+          <label>Field
+            <select id="elField">
+              <option value="title">title</option>
+              <option value="code">code/barcode</option>
+              <option value="reference">reference</option>
+              <option value="amount">amount/price</option>
+            </select>
+          </label>
+          <div class="grid-2">
+            <label>X <input id="elX" type="number"></label>
+            <label>Y <input id="elY" type="number"></label>
+            <label>Size <input id="elSize" type="number" min="1"></label>
+            <label>Height <input id="elHeight" type="number" min="10"></label>
+          </div>
+          <label>Default Value <input id="elValue"></label>
+          <button id="deleteElementBtn" class="danger">Delete Element</button>
+        </section>
+      </div>
+    </section>
+
+    <section id="bulk" class="page">
+      <div class="split">
+        <section class="panel">
+          <h3>Paste Rows</h3>
+          <textarea id="bulkText">code	reference	amount	title	quantity
+12345678	CU10000 - 094	KES 10,000/-	VALID FOR 3 MONTHS ONLY	5</textarea>
+          <div class="row-actions">
+            <button id="parseRowsBtn">Preview Rows</button>
+            <button id="printRowsBtn" class="primary">Print Pasted Rows</button>
+          </div>
+        </section>
+        <section class="panel">
+          <h3>Preview</h3>
+          <div id="rowPreview" class="table-preview"></div>
+        </section>
+      </div>
+    </section>
+
+    <section id="printer" class="page">
+      <div class="printer-grid">
+        <section class="panel">
+          <div class="panel-head">
+            <h3>Live Printer Configuration</h3>
+            <button id="refreshPrinterBtn">Refresh Printer Config</button>
+          </div>
+          <div class="calibration-bar">
+            <button id="calibratePrinterBtn" class="primary">Recalibrate Gap Sensor</button>
+            <button id="useContinuousBtn">Use Continuous Pitch</button>
+            <button id="useSensorBtn">Use Sensor Gap</button>
+          </div>
+          <div id="printerCards" class="diagnostic-cards"></div>
+        </section>
+        <section class="panel">
+          <h3>Mismatch Analysis</h3>
+          <div id="mismatchReport" class="mismatch-report"></div>
+        </section>
+        <section class="panel full-width">
+          <h3>Raw Driver Ticket</h3>
+          <textarea id="printerRawTicket" class="code" readonly></textarea>
+        </section>
+      </div>
+    </section>
+
+    <section id="xml" class="page">
+      <div class="panel full">
+        <div class="row-actions">
+          <button id="openXmlBtn">Open XML</button>
+          <button id="saveXmlBtn">Save XML</button>
+          <span id="xmlPath">No XML loaded</span>
+        </div>
+        <textarea id="xmlText" class="code"></textarea>
+      </div>
+    </section>
+
+    <section id="assets" class="page">
+      <div class="split">
+        <section class="panel">
+          <h3>Design Memory</h3>
+          <button id="importAssetBtn">Import Images</button>
+          <div id="assetList" class="asset-list"></div>
+        </section>
+        <section class="panel asset-preview">
+          <h3>Preview</h3>
+          <img id="assetPreview" alt="">
+        </section>
+      </div>
+    </section>
+
+    <section id="settings" class="page">
+      <div class="panel settings-card">
+        <h3>Printer and Safety</h3>
+        <label>Printer Name <input id="printerName"></label>
+        <label>Feed Mode
+          <select id="feedMode">
+            <option value="ContinuousPitch">Continuous pitch</option>
+            <option value="SensorGap">Sensor gap</option>
+          </select>
+        </label>
+        <label>Max Batch <input id="maxBatch" type="number"></label>
+        <button id="saveSettingsBtn" class="primary">Save Settings</button>
+      </div>
+    </section>
+
+    <div class="modal hidden" id="paperPreviewModal">
+      <div class="modal-card">
+        <div class="modal-head">
+          <div>
+            <h3>Paper Preview</h3>
+            <p>Shows how this template repeats on the roll before bulk printing.</p>
+          </div>
+          <button id="closePaperPreviewBtn">Close</button>
+        </div>
+        <canvas id="paperPreviewCanvas" width="700" height="920"></canvas>
+      </div>
+    </div>
+  </main>
+
+  <script src="renderer.js"></script>
+</body>
+</html>
