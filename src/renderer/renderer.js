@@ -763,7 +763,16 @@ function updateBulkTableMeta() {
 function drawBulkInlinePreview(rows) {
   const previewRows = expandRowsForPreview(rows && rows.length ? rows : [currentDesignRow()]).slice(0, 10);
   fitCanvasToContainer(bulkInlineCanvas);
-  drawLabelCardPreview(bulkInlineCanvas, bulkInlineCtx, previewRows, { cols: 2, maxScale: 0.72, sidePadding: 20, gapX: 12, gapY: 14, numberSize: 16, title: 'Live preview' });
+  drawLabelCardPreview(bulkInlineCanvas, bulkInlineCtx, previewRows, {
+    cols: 2,
+    maxScale: 0.74,
+    padX: 10,
+    gapX: 8,
+    gapY: 12,
+    cardBleed: 8,
+    numberSize: 16,
+    title: 'Live preview'
+  });
 }
 
 function openPaperPreview(rows = null) {
@@ -782,28 +791,33 @@ function drawLabelCardPreview(targetCanvas, targetCtx, rows, options = {}) {
   const cols = Math.max(1, Number(options.cols || 2));
   const gapX = Number(options.gapX || 18);
   const gapY = Number(options.gapY || 18);
-  const sidePadding = Number(options.sidePadding ?? 80);
-  const scale = Math.min(Number(options.maxScale || 0.42), (targetCanvas.width - sidePadding - (cols - 1) * gapX) / (labelDotsW * cols));
+  const padX = Number(options.padX ?? Math.max(18, Math.min(80, targetCanvas.width * 0.04)));
+  const cardBleed = Number(options.cardBleed ?? 10);
+  const titleY = 34;
+  const firstCardY = 62;
+  const availableWidth = Math.max(160, targetCanvas.width - (padX * 2) - (cardBleed * 2 * cols) - ((cols - 1) * gapX));
+  const scale = Math.max(0.1, Math.min(Number(options.maxScale || 0.42), availableWidth / (labelDotsW * cols)));
   const labelW = labelDotsW * scale;
   const labelH = labelDotsH * scale;
   const pitch = Math.max(pitchDots * scale, labelH + 16);
-  const left = Math.max(24, (targetCanvas.width - (cols * labelW + (cols - 1) * gapX)) / 2);
+  const totalCardWidth = (cols * (labelW + cardBleed * 2)) + ((cols - 1) * gapX);
+  const left = Math.max(cardBleed + padX, (targetCanvas.width - totalCardWidth) / 2 + cardBleed);
   const rowsNeeded = Math.ceil(visibleRows.length / cols);
-  const requiredHeight = Math.max(640, 72 + rowsNeeded * (pitch + gapY) + 64);
+  const requiredHeight = Math.max(520, firstCardY + rowsNeeded * (pitch + gapY) + 40);
   if (targetCanvas.height !== Math.ceil(requiredHeight)) targetCanvas.height = Math.ceil(requiredHeight);
   targetCtx.clearRect(0, 0, targetCanvas.width, targetCanvas.height);
   targetCtx.fillStyle = '#ecebe5';
   targetCtx.fillRect(0, 0, targetCanvas.width, targetCanvas.height);
   targetCtx.fillStyle = '#16181d';
   targetCtx.font = '600 16px "Segoe UI"';
-  targetCtx.fillText(`${options.title || 'Preview'} · ${visibleRows.length} label(s) shown · ${state.template.widthMm}mm x ${state.template.heightMm}mm`, 24, 34);
+  targetCtx.fillText(`${options.title || 'Preview'} · ${visibleRows.length} label(s) shown · ${state.template.widthMm}mm x ${state.template.heightMm}mm`, padX + 2, titleY);
   visibleRows.forEach((row, index) => {
     const col = index % cols;
     const rowIndex = Math.floor(index / cols);
-    const x = left + col * (labelW + gapX);
-    const y = 62 + rowIndex * (pitch + gapY);
+    const x = left + col * (labelW + cardBleed * 2 + gapX);
+    const y = firstCardY + rowIndex * (pitch + gapY);
     targetCtx.fillStyle = '#e2dbc4';
-    roundRect(targetCtx, x - 10, y - 10, labelW + 20, pitch + 14, 12, true, false);
+    roundRect(targetCtx, x - cardBleed, y - cardBleed, labelW + cardBleed * 2, pitch + cardBleed + 4, 12, true, false);
     targetCtx.fillStyle = '#fff';
     roundRect(targetCtx, x, y, labelW, labelH, 12, true, false);
     targetCtx.strokeStyle = '#c9a24a';
@@ -819,8 +833,9 @@ function drawLabelCardPreview(targetCanvas, targetCtx, rows, options = {}) {
 function fitCanvasToContainer(targetCanvas) {
   const parent = targetCanvas.parentElement;
   if (!parent) return;
-  const width = Math.max(520, Math.floor(parent.clientWidth - 4));
+  const width = Math.max(320, Math.floor(parent.clientWidth - 2));
   if (targetCanvas.width !== width) targetCanvas.width = width;
+  targetCanvas.style.width = `${width}px`;
 }
 
 function drawTemplateOnContext(targetCtx, row, offsetX, offsetY, scale) {
