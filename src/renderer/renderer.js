@@ -5,7 +5,10 @@ const state = {
   selectedId: null,
   rows: [],
   xmlPath: null,
-  dragging: null
+  dragging: null,
+  bulkParseTimer: null,
+  bulkParseDirty: false,
+  bulkParseVersion: 0
 };
 
 if (!window.labelStudio) {
@@ -99,6 +102,7 @@ async function init() {
   bindSettings();
   fillSettings();
   renderAll();
+  await parseRows({ silent: true });
   refreshPrinterDiagnostics();
 }
 
@@ -185,13 +189,13 @@ function bindDesigner() {
 function bindBulk() {
   $('importRowsBtn').addEventListener('click', importRowsFile);
   $('csvTemplateBtn').addEventListener('click', saveCsvTemplate);
-  $('parseRowsBtn').addEventListener('click', parseRows);
+  $('bulkText').addEventListener('input', scheduleBulkParse);
   $('previewRowsPaperBtn').addEventListener('click', async () => {
-    await parseRows();
+    await flushBulkRows();
     if (state.rows.length) openPaperPreview(state.rows);
   });
   $('printRowsBtn').addEventListener('click', async () => {
-    await parseRows();
+    await flushBulkRows();
     if (!state.rows.length) return;
     await sendPrintWithConfirm(state.rows, 'Bulk label pasted rows');
   });
@@ -536,14 +540,32 @@ function estimateElementBounds(el) {
   return { x: Number(el.x || 0), y: Number(el.y || 0), w: String(value).length * 12 * Number(el.size || 1), h: 20 * Number(el.size || 1) };
 }
 
-async function parseRows() {
-  analyzeBulkText($('bulkText').value);
-  state.rows = await window.labelStudio.parseRows($('bulkText').value);
+function scheduleBulkParse() {
+  state.bulkParseDirty = true;
+  clearTimeout(state.bulkParseTimer);
+  state.bulkParseTimer = setTimeout(() => {
+    parseRows({ silent: true });
+  }, 300);
+}
+
+async function flushBulkRows() {
+  clearTimeout(state.bulkParseTimer);
+  return parseRows({ silent: false });
+}
+
+async function parseRows(options = {}) {
+  const silent = Boolean(options.silent);
+  const version = ++state.bulkParseVersion;
+  const analysis = analyzeBulkText($('bulkText').value, { silent: true });
+  const rows = await window.labelStudio.parseRows($('bulkText').value);
+  if (version !== state.bulkParseVersion) return state.rows;
+  state.rows = rows;
+  state.bulkParseDirty = false;
   $('rowPreview').innerHTML = rowsTable(state.rows);
   const msg = state.rows.length
     ? `${state.rows.length} product row(s), ${labelCount(state.rows)} label(s) ready`
-    : 'No printable rows found. Check that your file has a barcode/code column.';
-  setStatus(msg, state.rows.length ? 'info' : 'error');
+    : analysis.note || 'No printable rows found. Check that your file has a barcode/code column.';
+  setStatus(msg, state.rows.length ? 'info' : 'error', { toast: !silent });
   return state.rows;
 }
 
@@ -559,8 +581,7 @@ function saveCsvTemplate() {
   link.download = 'bulk-label-product-template.csv';
   link.click();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
-  analyzeBulkText(template);
-  parseRows();
+  parseRows({ silent: true });
   setStatus('Default CSV template downloaded and loaded for editing.', 'ok');
 }
 
@@ -571,18 +592,17 @@ async function importRowsFile() {
     state.rows = result.rows || [];
     $('rowPreview').innerHTML = rowsTable(state.rows);
     $('bulkText').value = rowsToText(state.rows);
-    analyzeBulkText($('bulkText').value);
+    await parseRows({ silent: true });
     const name = result.filePath ? result.filePath.split(/[\\/]/).pop() : 'uploaded file';
     setStatus(`Loaded ${state.rows.length} product row(s) from ${name}; ${labelCount(state.rows)} label(s) ready`, 'ok');
-    if (state.rows.length) openPaperPreview(state.rows);
   } catch (error) {
     setStatus(error.message || String(error), 'error');
   }
 }
 
-function analyzeBulkText(text) {
+function analyzeBulkText(text, options = {}) {
   const firstLine = String(text || '').split(/\r?\n/).find(line => line.trim());
-  if (!firstLine) return;
+  if (!firstLine) return { ok: false, note: 'No product rows found. Paste or upload product data with a barcode/code column.' };
   const separator = firstLine.includes('\t') ? '\t' : firstLine.includes(';') ? ';' : ',';
   const headers = parseClientDelimitedLine(firstLine, separator).map(normalizeHeader);
   const missing = [];
@@ -591,7 +611,8 @@ function analyzeBulkText(text) {
   const note = missing.length
     ? `Template check: missing ${missing.join(', ')} column. Detected: ${detected || 'none'}.`
     : `Template check: detected columns ${detected}.`;
-  setStatus(note, missing.length ? 'error' : 'ok');
+  if (!options.silent) setStatus(note, missing.length ? 'error' : 'ok');
+  return { ok: !missing.length, note, headers };
 }
 
 function parseClientDelimitedLine(line, delimiter) {
@@ -635,12 +656,11 @@ async function startPrintProcess() {
 
 function rowsTable(rows) {
   const headers = ['code', 'product', 'reference', 'amount', 'title', 'quantity'];
-  if (!rows.length) return '<div class="empty">No rows ready.</div>';
   const total = labelCount(rows);
-  const body = rows.map((row, index) => `<tr>
+  const body = rows.length ? rows.map((row, index) => `<tr>
     <td class="row-number">${index + 1}</td>
     ${headers.map(h => `<td title="${escapeHtml(row[h] || '')}">${escapeHtml(row[h] || '')}</td>`).join('')}
-  </tr>`).join('');
+  </tr>`).join('') : `<tr class="empty-row"><td class="row-number">—</td><td colspan="${headers.length}">No printable rows found. Add a barcode/code column and product rows.</td></tr>`;
   return `<div class="table-meta">${rows.length} product row(s) · ${total} label(s) queued</div>
   <table class="data-grid"><thead><tr><th class="row-number">#</th>${headers.map(h => `<th>${h}</th>`).join('')}</tr></thead><tbody>${body}</tbody></table>`;
 }
@@ -653,7 +673,7 @@ function rowsToText(rows) {
 function openPaperPreview(rows = null) {
   const validRows = Array.isArray(rows) ? rows : null;
   const sourceRows = validRows || (state.rows.length ? state.rows : [currentDesignRow()]);
-  const previewRows = expandRowsForPreview(sourceRows).slice(0, 8);
+  const previewRows = expandRowsForPreview(sourceRows).slice(0, 10);
   drawPaperPreview(previewRows);
   $('paperPreviewModal').classList.remove('hidden');
 }
@@ -663,13 +683,13 @@ function drawPaperPreview(rows) {
   const labelDotsW = mmToDots(state.template.widthMm || 63.5);
   const labelDotsH = mmToDots(state.template.heightMm || 38.1);
   const pitchDots = mmToDots(state.template.pitchMm || 41.1);
-  const scale = Math.min(0.62, (paperCanvas.width - 120) / (labelDotsW * 2 + 48));
+  const cols = paperCanvas.width >= 1040 ? 5 : paperCanvas.width >= 840 ? 4 : paperCanvas.width >= 620 ? 3 : 2;
+  const gapX = 18;
+  const gapY = 18;
+  const scale = Math.min(0.36, (paperCanvas.width - 80 - (cols - 1) * gapX) / (labelDotsW * cols));
   const labelW = labelDotsW * scale;
   const labelH = labelDotsH * scale;
   const pitch = Math.max(pitchDots * scale, labelH + 16);
-  const cols = paperCanvas.width >= 920 ? 2 : 1;
-  const gapX = 40;
-  const gapY = 26;
   const left = Math.max(24, (paperCanvas.width - (cols * labelW + (cols - 1) * gapX)) / 2);
   const rowsNeeded = Math.ceil(visibleRows.length / cols);
   const requiredHeight = Math.max(640, 72 + rowsNeeded * (pitch + gapY) + 64);
@@ -819,9 +839,9 @@ function renderAll() {
   updateDesignCopySummary();
 }
 
-function setStatus(text, kind = 'info') {
+function setStatus(text, kind = 'info', options = {}) {
   $('saveStatus').textContent = text;
-  toast(text, kind);
+  if (options.toast !== false) toast(text, kind);
 }
 
 function toast(text, kind = 'info') {
