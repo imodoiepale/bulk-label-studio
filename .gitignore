@@ -3,6 +3,7 @@ dist/
 .npm-cache/
 .electron-cache/
 .electron-builder-cache/
+.claude/
 data/
 output/
 *.log

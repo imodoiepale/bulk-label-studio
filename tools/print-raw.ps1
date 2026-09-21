@@ -10,7 +10,7 @@ Add-Type @'
 using System;
 using System.ComponentModel;
 using System.Runtime.InteropServices;
-public class Bulk LabelRawSpool {
+public class BulkLabelRawSpool {
  [StructLayout(LayoutKind.Sequential,CharSet=CharSet.Unicode)] public class Doc { public string name; public string file=null; public string type="RAW"; }
  [DllImport("winspool.drv",CharSet=CharSet.Unicode,SetLastError=true)] static extern bool OpenPrinter(string name,out IntPtr h,IntPtr defaults);
  [DllImport("winspool.drv",CharSet=CharSet.Unicode,SetLastError=true)] static extern int StartDocPrinter(IntPtr h,int level,Doc doc);
@@ -37,6 +37,6 @@ if ($printer.WorkOffline) { throw "Printer offline: $PrinterName" }
 if (@(Get-PrintJob -PrinterName $PrinterName -ErrorAction SilentlyContinue).Count) { throw 'Queue is not empty; clear or wait before retrying.' }
 
 $payload = Get-Content -Raw -LiteralPath $PayloadPath
-$jobId = [Bulk LabelRawSpool]::Send($PrinterName, $JobName, $payload)
+$jobId = [BulkLabelRawSpool]::Send($PrinterName, $JobName, $payload)
 Write-Output $jobId
 

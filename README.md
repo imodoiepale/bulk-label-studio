@@ -6,7 +6,7 @@ Bulk Label Studio is a Windows Electron desktop app for designing, previewing, c
 
 - visual label canvas with draggable text and barcode elements
 - one-design-many-copies printing from the Designer screen
-- pasted bulk rows from Excel/CSV with `quantity`, `qty`, or `copies`
+- uploaded `.xlsx`, `.csv`, `.tsv`, or pasted rows where every product can have its own barcode
 - paper preview that repeats labels on the roll before printing
 - printer diagnostics for Windows driver, stock size, queue, port, and DPI
 - gap sensor recalibration command for TSPL printers
@@ -53,20 +53,31 @@ Use the Designer screen:
 
 This prints the same canvas design repeatedly. It does not require a CSV.
 
-## Bulk rows
+## Product barcode batches
 
-Use the Bulk Data screen or Designer > Bulk Edit. Paste rows like:
+Use the Bulk Data screen to upload Excel/CSV or paste rows. Every row becomes its own label, so different products can print different barcodes in the same batch.
 
 ```csv
-code,reference,amount,title,quantity
-12345678,CU10000 - 094,"KES 10,000/-",VALID FOR 3 MONTHS ONLY,5
+barcode,product,reference,price,title,quantity
+12345678,Leather Wallet,CU10000 - 094,"KES 10,000/-",VALID FOR 3 MONTHS ONLY,5
+98765432,Gift Voucher,CU10000 - 095,"KES 5,000/-",VALID FOR 3 MONTHS ONLY,2
 ```
 
 Accepted aliases:
 
-- `barcode` -> `code`
+- `barcode`, `upc`, `ean` -> `code`
+- `product`, `product name`, `name`, `description`, `item` -> `product`
+- `sku`, `ref`, `product code`, `item code` -> `reference`
 - `price` -> `amount`
 - `qty` or `copies` -> `quantity`
+
+Recommended workflow:
+
+1. click **Upload Excel/CSV**
+2. check the product/barcode preview table
+3. open **Paper Preview**
+4. print 5 labels first
+5. print the full product batch only after the barcodes and spacing are confirmed
 
 ## Current printer baseline
 
@@ -82,7 +93,9 @@ Port: USB012
 DPI: 203
 ```
 
-If printed labels drift, first use **Printer Config > Recalibrate Gap Sensor**, then test 5 labels only. If the sensor still drifts, switch to **Continuous Pitch** and tune Pitch mm.
+Default feed mode is **Sensor gap** with a 3 mm gap: the printer re-syncs on every gap, so small errors never accumulate across a long batch. Continuous Pitch feeds a fixed 41.1 mm per label and any error adds up, so use it only if the sensor cannot see the gap.
+
+Safe workflow: **Printer > Recalibrate Gap Sensor** → print 5 labels (`.\print_random_test.ps1`) → check alignment → bulk print. The app asks for confirmation before every job and warns on batches over 5.
 
 ## Why drift can happen
 

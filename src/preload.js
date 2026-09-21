@@ -6,6 +6,7 @@ const api = {
   listTemplates: () => ipcRenderer.invoke('templates:list'),
   saveTemplate: template => ipcRenderer.invoke('templates:save', template),
   parseRows: text => ipcRenderer.invoke('rows:parse', text),
+  importRows: () => ipcRenderer.invoke('rows:import'),
   openXml: () => ipcRenderer.invoke('xml:open'),
   saveXml: (filePath, text) => ipcRenderer.invoke('xml:save', filePath, text),
   importAssets: () => ipcRenderer.invoke('assets:import'),

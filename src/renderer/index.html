@@ -7,109 +7,148 @@
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
+  <svg width="0" height="0" style="position:absolute" aria-hidden="true">
+    <symbol id="i-design" viewBox="0 0 24 24"><path d="M4 20h4L19 9l-4-4L4 16v4zM13.5 6.5l4 4"/></symbol>
+    <symbol id="i-rows" viewBox="0 0 24 24"><path d="M4 5h16M4 10h16M4 15h16M4 20h10"/></symbol>
+    <symbol id="i-printer" viewBox="0 0 24 24"><path d="M7 9V3h10v6M7 17H4v-7h16v7h-3M7 14h10v7H7z"/></symbol>
+    <symbol id="i-code" viewBox="0 0 24 24"><path d="M9 7l-5 5 5 5M15 7l5 5-5 5"/></symbol>
+    <symbol id="i-image" viewBox="0 0 24 24"><path d="M4 5h16v14H4zM4 16l5-5 4 4 3-3 4 4"/><circle cx="15.5" cy="8.5" r="1.2"/></symbol>
+    <symbol id="i-gear" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M4.9 19.1L7 17M17 7l2.1-2.1"/></symbol>
+    <symbol id="i-play" viewBox="0 0 24 24"><path d="M7 5l12 7-12 7z"/></symbol>
+    <symbol id="i-eye" viewBox="0 0 24 24"><path d="M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></symbol>
+    <symbol id="i-target" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="3"/><path d="M12 1v4M12 19v4M1 12h4M19 12h4"/></symbol>
+    <symbol id="i-save" viewBox="0 0 24 24"><path d="M5 3h11l3 3v15H5zM8 3v5h7V3M8 21v-7h8v7"/></symbol>
+    <symbol id="i-folder" viewBox="0 0 24 24"><path d="M3 6h7l2 2h9v11H3z"/></symbol>
+    <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+    <symbol id="i-barcode" viewBox="0 0 24 24"><path d="M4 5v14M7 5v14M11 5v14M13 5v14M17 5v14M20 5v14"/></symbol>
+    <symbol id="i-fit" viewBox="0 0 24 24"><path d="M4 9V4h5M15 4h5v5M20 15v5h-5M9 20H4v-5"/></symbol>
+    <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M20 11a8 8 0 1 0-2.3 5.7M20 4v7h-7"/></symbol>
+    <symbol id="i-trash" viewBox="0 0 24 24"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13"/></symbol>
+    <symbol id="i-x" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></symbol>
+  </svg>
+
   <aside class="sidebar">
     <div class="brand">
       <div class="mark">BL</div>
       <div>
         <h1>Bulk Label</h1>
-        <p>Label Studio</p>
+        <p>Studio</p>
       </div>
     </div>
+    <div class="nav-label">Workspace</div>
     <nav>
-      <button class="nav active" data-page="designer">Designer</button>
-      <button class="nav" data-page="bulk">Bulk Data</button>
-      <button class="nav" data-page="printer">Printer Config</button>
-      <button class="nav" data-page="xml">XML Editor</button>
-      <button class="nav" data-page="assets">Designs</button>
-      <button class="nav" data-page="settings">Settings</button>
+      <button class="nav active" data-page="designer"><svg><use href="#i-design"/></svg>Designer</button>
+      <button class="nav" data-page="bulk"><svg><use href="#i-rows"/></svg>Bulk Data</button>
+      <button class="nav" data-page="printer"><svg><use href="#i-printer"/></svg>Printer</button>
     </nav>
+    <div class="nav-label">Library</div>
+    <nav>
+      <button class="nav" data-page="xml"><svg><use href="#i-code"/></svg>XML Editor</button>
+      <button class="nav" data-page="assets"><svg><use href="#i-image"/></svg>Design Memory</button>
+      <button class="nav" data-page="settings"><svg><use href="#i-gear"/></svg>Settings</button>
+    </nav>
+
+    <div class="printer-card" id="printerCard">
+      <div class="pc-head"><span class="dot" id="pcDot"></span><span id="pcState">Checking…</span></div>
+      <strong id="pcName">Xprinter XP-370B</strong>
+      <div class="pc-meta"><span id="pcStock">63.5 × 38.1 mm</span><span id="pcMode">Sensor gap</span></div>
+    </div>
     <div class="status-pill" id="saveStatus">Ready</div>
   </aside>
 
   <main>
     <header class="topbar">
-      <div>
+      <div class="titles">
+        <div class="crumb">Bulk Label Studio <span>/</span> <b id="crumbPage">Designer</b></div>
         <h2 id="pageTitle">Visual Designer</h2>
         <p id="pageSub">Drag label elements, edit text fields, save templates, and print tests.</p>
       </div>
       <div class="actions">
-        <button id="openDataBtn" class="ghost">Open Memory</button>
-        <button id="saveTemplateBtn" class="ghost">Save Template</button>
-        <button id="paperPreviewBtn" class="ghost">Paper Preview</button>
-        <button id="printTestBtn" class="primary">Print Test</button>
+        <div class="segmented">
+          <button id="openDataBtn" class="ghost" title="Open data folder"><svg><use href="#i-folder"/></svg>Memory</button>
+          <button id="saveTemplateBtn" class="ghost"><svg><use href="#i-save"/></svg>Save</button>
+          <button id="paperPreviewBtn" class="ghost"><svg><use href="#i-eye"/></svg>Preview</button>
+        </div>
+        <button id="printTestBtn" class="primary"><svg><use href="#i-play"/></svg>Print Test</button>
       </div>
     </header>
 
     <section id="designer" class="page active">
       <div class="workspace">
         <section class="panel left-tools">
-          <h3>Template</h3>
+          <div class="section-title">Template</div>
           <select id="templateSelect"></select>
           <label>Name <input id="templateName"></label>
           <div class="grid-2">
-            <label>Width mm <input id="templateWidth" type="number" step="0.1"></label>
-            <label>Height mm <input id="templateHeight" type="number" step="0.1"></label>
-            <label>Pitch mm <input id="templatePitch" type="number" step="0.1"></label>
-            <label>Gap mm <input id="templateGap" type="number" step="0.1"></label>
+            <label>Width <span class="unit"><input id="templateWidth" type="number" step="0.1"><i>mm</i></span></label>
+            <label>Height <span class="unit"><input id="templateHeight" type="number" step="0.1"><i>mm</i></span></label>
+            <label>Pitch <span class="unit"><input id="templatePitch" type="number" step="0.1"><i>mm</i></span></label>
+            <label>Gap <span class="unit"><input id="templateGap" type="number" step="0.1"><i>mm</i></span></label>
           </div>
-          <h3>Elements</h3>
-          <button id="addTextBtn">Add Text</button>
-          <button id="addBarcodeBtn">Add Barcode</button>
-          <button id="autoFitBtn">Auto Fit Label</button>
+          <div class="section-title">Elements</div>
+          <div class="tool-row">
+            <button id="addTextBtn" title="Add text"><svg><use href="#i-plus"/></svg>Text</button>
+            <button id="addBarcodeBtn" title="Add barcode"><svg><use href="#i-barcode"/></svg>Barcode</button>
+            <button id="autoFitBtn" title="Fit all elements inside the label"><svg><use href="#i-fit"/></svg>Fit</button>
+          </div>
           <div id="elementList" class="element-list"></div>
         </section>
 
         <section class="canvas-wrap">
           <div class="production-strip">
-            <div>
-              <strong>Production workflow</strong>
-              <span id="productionSummary">1 sample label ready</span>
+            <div class="ps-info">
+              <span class="eyebrow">Production</span>
+              <strong id="productionSummary">1 sample label ready</strong>
             </div>
             <div class="production-actions">
               <label class="copies-control">Copies <input id="designCopies" type="number" min="1" max="10000" value="5"></label>
-              <button id="bulkEditBtn">Bulk Edit</button>
-              <button id="calibrateFromDesignerBtn">Recalibrate Sensor</button>
-              <button id="designerPreviewBtn">Preview Paper</button>
-              <button id="startPrintBtn" class="primary">Start Print Process</button>
+              <button id="bulkEditBtn"><svg><use href="#i-rows"/></svg>Bulk Edit</button>
+              <button id="calibrateFromDesignerBtn"><svg><use href="#i-target"/></svg>Calibrate</button>
+              <button id="designerPreviewBtn"><svg><use href="#i-eye"/></svg>Preview</button>
+              <button id="startPrintBtn" class="primary"><svg><use href="#i-play"/></svg>Print</button>
             </div>
           </div>
-          <div class="ruler">Paper-accurate preview, 203 dpi TSPL coordinates, label boundary and gap shown</div>
-          <canvas id="labelCanvas" width="635" height="381"></canvas>
+          <div class="desk">
+            <canvas id="labelCanvas" width="635" height="381"></canvas>
+          </div>
+          <div class="ruler"><span>203 dpi · TSPL dots</span><span>Label edge = gold · gap = shaded</span></div>
           <section class="panel designer-bulk" id="designerBulkPanel">
             <div class="panel-head">
-              <h3>Bulk Edit Data</h3>
-              <button id="closeBulkEditBtn">Close</button>
+              <div class="section-title">Bulk Edit Data</div>
+              <button id="closeBulkEditBtn" class="icon" title="Close"><svg><use href="#i-x"/></svg></button>
             </div>
             <textarea id="designerBulkText">code	reference	amount	title	quantity
 12345678	CU10000 - 094	KES 10,000/-	VALID FOR 3 MONTHS ONLY	5</textarea>
             <div class="row-actions">
-              <button id="designerParseRowsBtn">Preview Rows</button>
-              <button id="designerPrintRowsBtn" class="primary">Print These Rows</button>
+              <button id="designerParseRowsBtn"><svg><use href="#i-eye"/></svg>Preview Rows</button>
+              <button id="designerPrintRowsBtn" class="primary"><svg><use href="#i-play"/></svg>Print These Rows</button>
             </div>
             <div id="designerRowPreview" class="table-preview compact"></div>
           </section>
         </section>
 
         <section class="panel properties">
-          <h3>Properties</h3>
+          <div class="section-title">Properties</div>
           <label>Label <input id="elLabel"></label>
           <label>Type <input id="elType" disabled></label>
           <label>Field
             <select id="elField">
               <option value="title">title</option>
-              <option value="code">code/barcode</option>
+              <option value="code">code / barcode</option>
+              <option value="product">product name</option>
               <option value="reference">reference</option>
-              <option value="amount">amount/price</option>
+              <option value="amount">amount / price</option>
             </select>
           </label>
           <div class="grid-2">
-            <label>X <input id="elX" type="number"></label>
-            <label>Y <input id="elY" type="number"></label>
+            <label>X <span class="unit"><input id="elX" type="number"><i>dots</i></span></label>
+            <label>Y <span class="unit"><input id="elY" type="number"><i>dots</i></span></label>
             <label>Size <input id="elSize" type="number" min="1"></label>
-            <label>Height <input id="elHeight" type="number" min="10"></label>
+            <label>Height <span class="unit"><input id="elHeight" type="number" min="10"><i>dots</i></span></label>
           </div>
           <label>Default Value <input id="elValue"></label>
-          <button id="deleteElementBtn" class="danger">Delete Element</button>
+          <button id="deleteElementBtn" class="danger"><svg><use href="#i-trash"/></svg>Delete Element</button>
+          <div class="hint">Tip: 8 dots = 1 mm. Keep elements at least 16 dots from every edge.</div>
         </section>
       </div>
     </section>
@@ -117,42 +156,58 @@
     <section id="bulk" class="page">
       <div class="split">
         <section class="panel">
-          <h3>Paste Rows</h3>
+          <div class="panel-head">
+            <div>
+              <div class="section-title">Products and barcodes</div>
+              <p class="muted">Upload Excel/CSV or paste rows. Every row prints its own barcode.</p>
+            </div>
+            <button id="importRowsBtn"><svg><use href="#i-folder"/></svg>Upload Excel/CSV</button>
+          </div>
           <textarea id="bulkText">code	reference	amount	title	quantity
 12345678	CU10000 - 094	KES 10,000/-	VALID FOR 3 MONTHS ONLY	5</textarea>
           <div class="row-actions">
-            <button id="parseRowsBtn">Preview Rows</button>
-            <button id="printRowsBtn" class="primary">Print Pasted Rows</button>
+            <button id="parseRowsBtn"><svg><use href="#i-eye"/></svg>Preview Rows</button>
+            <button id="previewRowsPaperBtn"><svg><use href="#i-eye"/></svg>Paper Preview</button>
+            <button id="printRowsBtn" class="primary"><svg><use href="#i-play"/></svg>Print Pasted Rows</button>
           </div>
         </section>
         <section class="panel">
-          <h3>Preview</h3>
-          <div id="rowPreview" class="table-preview"></div>
+          <div class="section-title">Preview</div>
+          <div id="rowPreview" class="table-preview"><div class="empty">No rows yet. Paste data and press Preview Rows.</div></div>
         </section>
       </div>
     </section>
 
     <section id="printer" class="page">
+      <ol class="stepper">
+        <li><b>1</b><div><strong>Calibrate</strong><span>Teach the sensor the 3 mm gap</span></div></li>
+        <li><b>2</b><div><strong>Test 5</strong><span>Check alignment on paper</span></div></li>
+        <li><b>3</b><div><strong>Bulk</strong><span>Print the full batch</span></div></li>
+      </ol>
       <div class="printer-grid">
         <section class="panel">
           <div class="panel-head">
-            <h3>Live Printer Configuration</h3>
-            <button id="refreshPrinterBtn">Refresh Printer Config</button>
+            <div class="section-title">Live Printer Configuration</div>
+            <button id="refreshPrinterBtn"><svg><use href="#i-refresh"/></svg>Refresh</button>
           </div>
           <div class="calibration-bar">
-            <button id="calibratePrinterBtn" class="primary">Recalibrate Gap Sensor</button>
-            <button id="useContinuousBtn">Use Continuous Pitch</button>
-            <button id="useSensorBtn">Use Sensor Gap</button>
+            <button id="calibratePrinterBtn" class="primary"><svg><use href="#i-target"/></svg>Recalibrate Gap Sensor</button>
+            <div class="segmented">
+              <button id="useSensorBtn">Sensor Gap</button>
+              <button id="useContinuousBtn">Continuous Pitch</button>
+            </div>
           </div>
           <div id="printerCards" class="diagnostic-cards"></div>
         </section>
         <section class="panel">
-          <h3>Mismatch Analysis</h3>
+          <div class="section-title">Mismatch Analysis</div>
           <div id="mismatchReport" class="mismatch-report"></div>
         </section>
         <section class="panel full-width">
-          <h3>Raw Driver Ticket</h3>
-          <textarea id="printerRawTicket" class="code" readonly></textarea>
+          <details>
+            <summary class="section-title">Raw Driver Ticket</summary>
+            <textarea id="printerRawTicket" class="code" readonly></textarea>
+          </details>
         </section>
       </div>
     </section>
@@ -160,9 +215,9 @@
     <section id="xml" class="page">
       <div class="panel full">
         <div class="row-actions">
-          <button id="openXmlBtn">Open XML</button>
-          <button id="saveXmlBtn">Save XML</button>
-          <span id="xmlPath">No XML loaded</span>
+          <button id="openXmlBtn"><svg><use href="#i-folder"/></svg>Open XML</button>
+          <button id="saveXmlBtn"><svg><use href="#i-save"/></svg>Save XML</button>
+          <span id="xmlPath" class="muted">No XML loaded</span>
         </div>
         <textarea id="xmlText" class="code"></textarea>
       </div>
@@ -171,12 +226,14 @@
     <section id="assets" class="page">
       <div class="split">
         <section class="panel">
-          <h3>Design Memory</h3>
-          <button id="importAssetBtn">Import Images</button>
+          <div class="panel-head">
+            <div class="section-title">Design Memory</div>
+            <button id="importAssetBtn"><svg><use href="#i-plus"/></svg>Import Images</button>
+          </div>
           <div id="assetList" class="asset-list"></div>
         </section>
         <section class="panel asset-preview">
-          <h3>Preview</h3>
+          <div class="section-title">Preview</div>
           <img id="assetPreview" alt="">
         </section>
       </div>
@@ -184,16 +241,16 @@
 
     <section id="settings" class="page">
       <div class="panel settings-card">
-        <h3>Printer and Safety</h3>
+        <div class="section-title">Printer and Safety</div>
         <label>Printer Name <input id="printerName"></label>
         <label>Feed Mode
           <select id="feedMode">
+            <option value="SensorGap">Sensor gap (recommended)</option>
             <option value="ContinuousPitch">Continuous pitch</option>
-            <option value="SensorGap">Sensor gap</option>
           </select>
         </label>
         <label>Max Batch <input id="maxBatch" type="number"></label>
-        <button id="saveSettingsBtn" class="primary">Save Settings</button>
+        <button id="saveSettingsBtn" class="primary"><svg><use href="#i-save"/></svg>Save Settings</button>
       </div>
     </section>
 
@@ -202,13 +259,26 @@
         <div class="modal-head">
           <div>
             <h3>Paper Preview</h3>
-            <p>Shows how this template repeats on the roll before bulk printing.</p>
+            <p>How this template repeats on the roll before printing.</p>
           </div>
-          <button id="closePaperPreviewBtn">Close</button>
+          <button id="closePaperPreviewBtn" class="icon" title="Close"><svg><use href="#i-x"/></svg></button>
         </div>
         <canvas id="paperPreviewCanvas" width="700" height="920"></canvas>
       </div>
     </div>
+
+    <div class="modal hidden" id="askModal">
+      <div class="modal-card dialog">
+        <h3 id="askTitle">Confirm</h3>
+        <div id="askBody" class="ask-body"></div>
+        <div class="row-actions end">
+          <button id="askCancel">Cancel</button>
+          <button id="askOk" class="primary">Continue</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="toasts" class="toasts"></div>
   </main>
 
   <script src="renderer.js"></script>

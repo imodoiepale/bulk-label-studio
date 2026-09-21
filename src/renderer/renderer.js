@@ -14,8 +14,8 @@ if (!window.labelStudio) {
     widthMm: 63.5,
     heightMm: 38.1,
     pitchMm: 41.1,
-    feedMode: 'ContinuousPitch',
-    gapMm: 0,
+    feedMode: 'SensorGap',
+    gapMm: 3,
     elements: [
       { id: 'title', type: 'text', label: 'Title', field: 'title', x: 72, y: 24, size: 1, value: 'VALID FOR 3 MONTHS ONLY' },
       { id: 'barcode', type: 'barcode', label: 'Barcode', field: 'code', x: 78, y: 64, height: 72, narrow: 2, wide: 4, value: '12345678' },
@@ -24,7 +24,8 @@ if (!window.labelStudio) {
     ]
   };
   window.labelStudio = {
-    getSettings: async () => ({ printerName: 'Xprinter XP-370B', feedMode: 'ContinuousPitch', maxBatch: 500 }),
+    getSettings: async () => ({ printerName: 'Xprinter XP-370B', feedMode: 'SensorGap', maxBatch: 500 }),
+    getPrinterDiagnostics: async () => ({ printer: { Name: 'Xprinter XP-370B', PortName: 'USB012', HorizontalResolution: 203, VerticalResolution: 203 }, queue: [], media: {} }),
     saveSettings: async () => true,
     listTemplates: async () => [{ file: 'preview', name: previewTemplate.name, template: structuredClone(previewTemplate) }],
     saveTemplate: async () => ({ file: 'preview' }),
@@ -40,14 +41,18 @@ if (!window.labelStudio) {
         return { code: row.code || '', reference: row.reference || '', amount: row.amount || '', title: row.title || 'VALID FOR 3 MONTHS ONLY', quantity: Number(row.quantity || row.qty || row.copies || 1) || 1 };
       }).filter(row => row.code);
     },
+    importRows: async () => {
+      toast('Preview mode: Excel upload works in the desktop app.');
+      return null;
+    },
     openXml: async () => null,
     saveXml: async () => null,
     importAssets: async () => [],
     listAssets: async () => [],
-    openData: async () => alert('Preview mode: open the Electron app for app memory.'),
+    openData: async () => toast('Preview mode: open the Electron app for app memory.'),
     calibratePrinter: async () => ({ jobId: 'preview', heightDots: 305, gapDots: 24 }),
     print: async () => {
-      alert('Preview mode: printing works only in the Electron app.');
+      toast('Preview mode: printing works only in the Electron app.');
       return { jobId: 'preview' };
     }
   };
@@ -61,16 +66,22 @@ const paperCtx = paperCanvas.getContext('2d');
 
 const sample = {
   code: '12345678',
+  product: 'Sample Product',
   reference: 'CU10000 - 094',
   amount: 'KES 10,000/-',
   title: 'VALID FOR 3 MONTHS ONLY'
 };
 
+const PAD = 28;        // canvas margin around the label, in dots
+const DPMM = 203 / 25.4;
+const SAFE = 16;       // recommended edge margin, in dots (2 mm)
+const INK = '#16181d';
+
 const pageMeta = {
   designer: ['Visual Designer', 'Drag label elements, edit text fields, save templates, and print tests.'],
   bulk: ['Bulk Data', 'Paste rows from Excel, CSV, WhatsApp, or any copied table.'],
   xml: ['XML Editor', 'Open, inspect, edit, and save Barcode & Label XML templates.'],
-  printer: ['Printer Config', 'Read the Windows driver, stock, queue, and mismatch report before printing.'],
+  printer: ['Printer', 'Read the Windows driver, stock, queue, and mismatch report before printing.'],
   assets: ['Design Memory', 'Store images, screenshots, prize references, and label design ideas.'],
   settings: ['Settings', 'Configure the printer, feed mode, and safety limits.']
 };
@@ -100,6 +111,7 @@ function bindNav() {
       $(button.dataset.page).classList.add('active');
       $('pageTitle').textContent = pageMeta[button.dataset.page][0];
       $('pageSub').textContent = pageMeta[button.dataset.page][1];
+      $('crumbPage').textContent = button.textContent.trim();
     });
   });
   $('openDataBtn').addEventListener('click', () => window.labelStudio.openData());
@@ -171,7 +183,12 @@ function bindDesigner() {
 }
 
 function bindBulk() {
+  $('importRowsBtn').addEventListener('click', importRowsFile);
   $('parseRowsBtn').addEventListener('click', parseRows);
+  $('previewRowsPaperBtn').addEventListener('click', async () => {
+    await parseRows();
+    if (state.rows.length) openPaperPreview(state.rows);
+  });
   $('printRowsBtn').addEventListener('click', async () => {
     await parseRows();
     if (!state.rows.length) return;
@@ -315,58 +332,88 @@ function renderElements() {
 
 function drawCanvas() {
   if (!state.template) return;
-  const w = Math.max(320, Math.round(mmToDots(state.template.widthMm || 63.5)));
+  const labelW = mmToDots(state.template.widthMm || 63.5);
   const pitchDots = Math.max(mmToDots(state.template.pitchMm || 41.1), mmToDots(state.template.heightMm || 38.1));
-  const h = Math.max(220, Math.round(pitchDots + 64));
+  const w = Math.round(labelW + PAD * 2);
+  const h = Math.round(pitchDots + PAD * 2 + 20);
   if (canvas.width !== w || canvas.height !== h) {
     canvas.width = w;
     canvas.height = h;
   }
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.clearRect(0, 0, canvas.width, canvas.height);
-  ctx.fillStyle = '#f3ecd8';
-  ctx.fillRect(0, 0, canvas.width, canvas.height);
   const labelHeight = mmToDots(state.template.heightMm || 38.1);
   const pitch = mmToDots(state.template.pitchMm || state.template.heightMm || 38.1);
   const gap = Math.max(0, pitch - labelHeight);
-  ctx.fillStyle = '#fff';
-  roundRect(ctx, 8, 8, canvas.width - 16, Math.min(labelHeight, canvas.height - 16), 14, true, false);
-  if (gap > 0 && labelHeight + 8 < canvas.height) {
-    ctx.fillStyle = '#d8d0ad';
-    ctx.fillRect(8, Math.min(labelHeight + 8, canvas.height - gap), canvas.width - 16, Math.min(gap, 30));
+  // Backing liner behind the label, then the gap band below it
+  ctx.fillStyle = '#e9e3cf';
+  roundRect(ctx, PAD - 10, PAD - 10, labelW + 20, pitch + 20, 10, true, false);
+  ctx.translate(PAD, PAD);
+  ctx.fillStyle = '#fffdf8';
+  roundRect(ctx, 0, 0, labelW, labelHeight, 12, true, false);
+  if (gap > 0) {
+    ctx.fillStyle = 'rgba(160, 140, 90, .18)';
+    ctx.fillRect(0, labelHeight, labelW, gap);
   }
-  ctx.strokeStyle = '#d9e2ef';
-  for (let x = 0; x < canvas.width; x += 32) {
-    ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, canvas.height); ctx.stroke();
+  // 1 mm grid (8 dots), heavier every 5 mm
+  for (let mm = 1; mm * DPMM < labelW; mm++) {
+    ctx.strokeStyle = mm % 5 ? 'rgba(22, 24, 29, .035)' : 'rgba(22, 24, 29, .08)';
+    ctx.beginPath(); ctx.moveTo(mm * DPMM, 0); ctx.lineTo(mm * DPMM, labelHeight); ctx.stroke();
   }
-  for (let y = 0; y < canvas.height; y += 32) {
-    ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(canvas.width, y); ctx.stroke();
+  for (let mm = 1; mm * DPMM < labelHeight; mm++) {
+    ctx.strokeStyle = mm % 5 ? 'rgba(22, 24, 29, .035)' : 'rgba(22, 24, 29, .08)';
+    ctx.beginPath(); ctx.moveTo(0, mm * DPMM); ctx.lineTo(labelW, mm * DPMM); ctx.stroke();
   }
+  // Safe margin
+  ctx.setLineDash([4, 4]);
+  ctx.strokeStyle = 'rgba(201, 162, 74, .45)';
+  ctx.strokeRect(SAFE, SAFE, labelW - SAFE * 2, labelHeight - SAFE * 2);
+  ctx.setLineDash([]);
   for (const el of state.template.elements || []) {
-    const value = sample[el.field] || el.value || '';
+    const value = valueForField(sample, el.field, el.value);
     const selected = el.id === state.selectedId;
-    ctx.strokeStyle = selected ? '#1167d8' : 'transparent';
-    ctx.fillStyle = '#172033';
+    const b = estimateElementBounds(el);
+    const outside = b.x < 0 || b.y < 0 || b.x + b.w > labelW || b.y + b.h > labelHeight;
+    ctx.fillStyle = INK;
     if (el.type === 'barcode') {
-      drawFakeBarcode(el.x, el.y, 250, el.height || 70, value);
-      ctx.strokeRect(el.x - 6, el.y - 6, 262, (el.height || 70) + 12);
+      drawFakeBarcode(el.x, el.y, b.w, el.height || 72, value);
     } else {
-      ctx.font = `${14 * (el.size || 1)}px Consolas`;
-      ctx.fillText(value, el.x, el.y + 14);
-      const width = ctx.measureText(value).width;
-      ctx.strokeRect(el.x - 6, el.y - 4, width + 12, 24 * (el.size || 1));
+      drawTspText(ctx, value, el.x, el.y, el.size || 1);
+    }
+    if (selected || outside) {
+      ctx.strokeStyle = outside ? '#c2413b' : '#c9a24a';
+      ctx.lineWidth = 2;
+      ctx.fillStyle = outside ? 'rgba(194, 65, 59, .08)' : 'rgba(201, 162, 74, .10)';
+      roundRect(ctx, b.x - 4, b.y - 4, b.w + 8, b.h + 8, 4, true, true);
+      ctx.lineWidth = 1;
     }
   }
-  ctx.strokeStyle = '#d8aa39';
+  ctx.strokeStyle = '#c9a24a';
   ctx.lineWidth = 2;
-  roundRect(ctx, 8, 8, canvas.width - 16, Math.min(labelHeight, canvas.height - 16), 14, false, true);
+  roundRect(ctx, 0, 0, labelW, labelHeight, 12, false, true);
   ctx.lineWidth = 1;
-  ctx.fillStyle = '#7a6a2b';
-  ctx.font = '12px Segoe UI';
-  ctx.fillText(`Label ${state.template.widthMm}mm x ${state.template.heightMm}mm · Pitch ${state.template.pitchMm}mm`, 14, canvas.height - 12);
+  ctx.fillStyle = '#8a7a4a';
+  ctx.font = '600 12px "Segoe UI"';
+  ctx.fillText(`${state.template.widthMm} × ${state.template.heightMm} mm  ·  pitch ${state.template.pitchMm} mm`, 0, pitch + 26);
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+}
+
+// TSPL font "2" is 12 × 20 dots per character; draw the preview at that exact cell size.
+function drawTspText(targetCtx, value, x, y, size, scale = 1) {
+  const cellW = 12 * size * scale;
+  const cellH = 20 * size * scale;
+  targetCtx.save();
+  targetCtx.font = `600 ${cellH}px Consolas, "Cascadia Mono", monospace`;
+  targetCtx.textBaseline = 'top';
+  const natural = targetCtx.measureText('M').width || cellW;
+  targetCtx.translate(x, y);
+  targetCtx.scale(cellW / natural, 1);
+  targetCtx.fillText(String(value), 0, 0);
+  targetCtx.restore();
 }
 
 function drawFakeBarcode(x, y, w, h, text) {
-  ctx.fillStyle = '#172033';
+  ctx.fillStyle = INK;
   let cursor = x;
   for (let i = 0; cursor < x + w; i++) {
     const bar = (text.charCodeAt(i % text.length) + i) % 4 + 1;
@@ -377,8 +424,15 @@ function drawFakeBarcode(x, y, w, h, text) {
 
 function canvasDown(event) {
   const point = canvasPoint(event);
-  const hit = [...state.template.elements].reverse().find(el => point.x >= el.x - 10 && point.x <= el.x + 280 && point.y >= el.y - 12 && point.y <= el.y + (el.height || 40) + 18);
-  if (!hit) return;
+  const hit = [...state.template.elements].reverse().find(el => {
+    const b = estimateElementBounds(el);
+    return point.x >= b.x - 8 && point.x <= b.x + b.w + 8 && point.y >= b.y - 8 && point.y <= b.y + b.h + 8;
+  });
+  if (!hit) {
+    state.selectedId = null;
+    renderAll();
+    return;
+  }
   state.selectedId = hit.id;
   state.dragging = { id: hit.id, dx: point.x - hit.x, dy: point.y - hit.y };
   renderAll();
@@ -397,8 +451,8 @@ function canvasMove(event) {
 function canvasPoint(event) {
   const rect = canvas.getBoundingClientRect();
   return {
-    x: (event.clientX - rect.left) * (canvas.width / rect.width),
-    y: (event.clientY - rect.top) * (canvas.height / rect.height)
+    x: (event.clientX - rect.left) * (canvas.width / rect.width) - PAD,
+    y: (event.clientY - rect.top) * (canvas.height / rect.height) - PAD
   };
 }
 
@@ -406,7 +460,7 @@ async function saveTemplate() {
   readTemplateForm();
   await window.labelStudio.saveTemplate(state.template);
   await loadTemplates();
-  setStatus('Template saved');
+  setStatus('Template saved', 'ok');
 }
 
 async function printTest() {
@@ -418,24 +472,29 @@ async function sendPrint(rows, jobName) {
     readSettingsForm();
     readTemplateForm();
     const result = await window.labelStudio.print({ template: state.template, settings: state.settings, rows, jobName });
-    setStatus(`Printed job ${result.jobId}`);
+    setStatus(`Sent to printer · job ${result.jobId}`, 'ok');
   } catch (error) {
-    setStatus(error.message || String(error));
-    alert(error.message || String(error));
+    setStatus(error.message || String(error), 'error');
   }
 }
 
 async function sendPrintWithConfirm(rows, jobName) {
   const issues = validateTemplateBounds();
   if (issues.length) {
-    const fix = confirm(`This design may print outside the label:\n\n${issues.join('\n')}\n\nAuto-fit it before printing?`);
+    const fix = await ask('Design is outside the label', `<p>These elements would be clipped:</p><ul>${issues.map(i => `<li>${escapeHtml(i)}</li>`).join('')}</ul><p>Auto-fit them inside the safe margin?</p>`, 'Auto-fit');
     if (!fix) return;
     autoFitTemplate();
     renderAll();
   }
-  openPaperPreview(rows.slice(0, 5));
   const total = labelCount(rows);
-  const ok = confirm(`Start printing ${total} label(s) to ${state.settings.printerName}?\n\nIf spacing drifts, use Printer Config > Recalibrate Gap Sensor, then test 5 labels only.`);
+  const t = state.template;
+  const mode = state.settings.feedMode === 'SensorGap' ? `Sensor gap · ${t.gapMm || 3} mm` : `Continuous · pitch ${t.pitchMm} mm`;
+  const warn = total > 5 ? '<p>Printing more than 5? Run a 5-label test first to confirm alignment.</p>' : '';
+  const ok = await ask(`Print ${total} label${total === 1 ? '' : 's'}?`, `<dl>
+    <dt>Printer</dt><dd>${escapeHtml(state.settings.printerName)}</dd>
+    <dt>Labels</dt><dd>${total}</dd>
+    <dt>Stock</dt><dd>${t.widthMm} × ${t.heightMm} mm</dd>
+    <dt>Feed</dt><dd>${mode}</dd></dl>${warn}`, 'Print now');
   if (!ok) return;
   await sendPrint(rows, jobName);
 }
@@ -465,15 +524,37 @@ function autoFitTemplate() {
 }
 
 function estimateElementBounds(el) {
-  if (el.type === 'barcode') return { x: Number(el.x || 0), y: Number(el.y || 0), w: 270, h: Number(el.height || 72) };
-  const value = sample[el.field] || el.value || el.label || '';
-  return { x: Number(el.x || 0), y: Number(el.y || 0), w: Math.max(80, String(value).length * 9 * Number(el.size || 1)), h: 28 * Number(el.size || 1) };
+  if (el.type === 'barcode') {
+    // Code 39: (value + start/stop) chars × (6 narrow + 3 wide + 1 narrow gap)
+    const code = String(valueForField(sample, el.field, el.value || '12345678'));
+    const narrow = Number(el.narrow || 2);
+    const wide = Number(el.wide || 4);
+    return { x: Number(el.x || 0), y: Number(el.y || 0), w: (code.length + 2) * (7 * narrow + 3 * wide), h: Number(el.height || 72) };
+  }
+  const value = valueForField(sample, el.field, el.value || el.label || '');
+  return { x: Number(el.x || 0), y: Number(el.y || 0), w: String(value).length * 12 * Number(el.size || 1), h: 20 * Number(el.size || 1) };
 }
 
 async function parseRows() {
   state.rows = await window.labelStudio.parseRows($('bulkText').value);
   $('rowPreview').innerHTML = rowsTable(state.rows);
-  setStatus(`${state.rows.length} row(s), ${labelCount(state.rows)} label(s) ready`);
+  setStatus(`${state.rows.length} product row(s), ${labelCount(state.rows)} label(s) ready`);
+  return state.rows;
+}
+
+async function importRowsFile() {
+  try {
+    const result = await window.labelStudio.importRows();
+    if (!result) return;
+    state.rows = result.rows || [];
+    $('rowPreview').innerHTML = rowsTable(state.rows);
+    $('bulkText').value = rowsToText(state.rows);
+    const name = result.filePath ? result.filePath.split(/[\\/]/).pop() : 'uploaded file';
+    setStatus(`Loaded ${state.rows.length} product row(s) from ${name}; ${labelCount(state.rows)} label(s) ready`, 'ok');
+    if (state.rows.length) openPaperPreview(state.rows);
+  } catch (error) {
+    setStatus(error.message || String(error), 'error');
+  }
 }
 
 async function parseDesignerRows() {
@@ -491,9 +572,14 @@ async function startPrintProcess() {
 }
 
 function rowsTable(rows) {
-  const headers = ['code', 'reference', 'amount', 'title', 'quantity'];
+  const headers = ['code', 'product', 'reference', 'amount', 'title', 'quantity'];
   if (!rows.length) return '<div class="empty">No rows ready.</div>';
   return `<table><thead><tr>${headers.map(h => `<th>${h}</th>`).join('')}</tr></thead><tbody>${rows.map(row => `<tr>${headers.map(h => `<td>${escapeHtml(row[h] || '')}</td>`).join('')}</tr>`).join('')}</tbody></table>`;
+}
+
+function rowsToText(rows) {
+  const headers = ['code', 'product', 'reference', 'amount', 'title', 'quantity'];
+  return [headers.join('\t'), ...(rows || []).map(row => headers.map(h => String(row[h] ?? '').replace(/\t/g, ' ')).join('\t'))].join('\n');
 }
 
 function openPaperPreview(rows = null) {
@@ -506,7 +592,7 @@ function openPaperPreview(rows = null) {
 
 function drawPaperPreview(rows) {
   paperCtx.clearRect(0, 0, paperCanvas.width, paperCanvas.height);
-  paperCtx.fillStyle = '#eef2f6';
+  paperCtx.fillStyle = '#ecebe5';
   paperCtx.fillRect(0, 0, paperCanvas.width, paperCanvas.height);
   const scale = Math.min(1.35, (paperCanvas.width - 80) / mmToDots(state.template.widthMm || 63.5));
   const labelW = mmToDots(state.template.widthMm || 63.5) * scale;
@@ -514,42 +600,41 @@ function drawPaperPreview(rows) {
   const pitch = mmToDots(state.template.pitchMm || 41.1) * scale;
   const x = (paperCanvas.width - labelW) / 2;
   let y = 32;
-  paperCtx.fillStyle = '#d6cfaa';
+  paperCtx.fillStyle = '#e2dbc4';
   roundRect(paperCtx, x - 18, 14, labelW + 36, Math.min(paperCanvas.height - 28, pitch * rows.length + 40), 12, true, false);
   rows.forEach((row, index) => {
     paperCtx.fillStyle = '#fff';
     roundRect(paperCtx, x, y, labelW, labelH, 12, true, false);
-    paperCtx.strokeStyle = '#d8aa39';
+    paperCtx.strokeStyle = '#c9a24a';
     paperCtx.lineWidth = 1.5;
     roundRect(paperCtx, x, y, labelW, labelH, 12, false, true);
     drawTemplateOnContext(paperCtx, row, x, y, scale);
-    paperCtx.fillStyle = '#6f7c8f';
-    paperCtx.font = '12px Segoe UI';
-    paperCtx.fillText(`Label ${index + 1}`, x + 8, y + labelH - 8);
+    paperCtx.fillStyle = '#8a7a4a';
+    paperCtx.font = '600 11px "Segoe UI"';
+    paperCtx.fillText(`#${index + 1}`, x + labelW + 6, y + 14);
     y += pitch;
   });
-  paperCtx.fillStyle = '#19253a';
-  paperCtx.font = '14px Segoe UI';
+  paperCtx.fillStyle = '#16181d';
+  paperCtx.font = '600 13px "Segoe UI"';
   paperCtx.fillText(`Previewing ${rows.length} label(s) · ${state.template.widthMm}mm x ${state.template.heightMm}mm · pitch ${state.template.pitchMm}mm`, 24, paperCanvas.height - 20);
 }
 
 function drawTemplateOnContext(targetCtx, row, offsetX, offsetY, scale) {
   for (const el of state.template.elements || []) {
-    const value = String(row[el.field] || el.value || '');
+    const value = String(valueForField(row, el.field, el.value));
     const x = offsetX + el.x * scale;
     const y = offsetY + el.y * scale;
-    targetCtx.fillStyle = '#172033';
+    targetCtx.fillStyle = INK;
     if (el.type === 'barcode') {
-      drawFakeBarcodeOn(targetCtx, x, y, barcodePreviewWidth(el) * scale, (el.height || 72) * scale, value);
+      drawFakeBarcodeOn(targetCtx, x, y, estimateElementBounds(el).w * scale, (el.height || 72) * scale, value);
     } else {
-      targetCtx.font = `${14 * (el.size || 1) * scale}px Consolas`;
-      targetCtx.fillText(value, x, y + 14 * scale);
+      drawTspText(targetCtx, value, x, y, el.size || 1, scale);
     }
   }
 }
 
 function drawFakeBarcodeOn(targetCtx, x, y, w, h, text) {
-  targetCtx.fillStyle = '#172033';
+  targetCtx.fillStyle = INK;
   let cursor = x;
   const safeText = text || '12345678';
   for (let i = 0; cursor < x + w; i++) {
@@ -577,8 +662,8 @@ async function refreshPrinterDiagnostics() {
     readSettingsForm();
     const diag = await window.labelStudio.getPrinterDiagnostics(state.settings.printerName);
     renderPrinterDiagnostics(diag);
-    setStatus('Printer config refreshed');
   } catch (error) {
+    setPrinterCard(false, 'Unavailable');
     $('printerCards').innerHTML = `<div class="notice warning">${escapeHtml(error.message || String(error))}</div>`;
     $('mismatchReport').innerHTML = '<div class="notice warning">Unable to read printer configuration.</div>';
   }
@@ -588,15 +673,17 @@ async function calibratePrinter() {
   try {
     readSettingsForm();
     readTemplateForm();
-    const ok = confirm(`Recalibrate the printer gap sensor for ${state.settings.printerName}?\n\nLabel: ${state.template.widthMm}mm x ${state.template.heightMm}mm\nGap: ${state.template.gapMm || 3}mm\n\nThe printer may feed blank labels while detecting the gap.`);
+    const ok = await ask('Recalibrate gap sensor?', `<dl>
+      <dt>Printer</dt><dd>${escapeHtml(state.settings.printerName)}</dd>
+      <dt>Label</dt><dd>${state.template.widthMm} × ${state.template.heightMm} mm</dd>
+      <dt>Gap</dt><dd>${state.template.gapMm || 3} mm</dd></dl>
+      <p>The printer will feed a few blank labels while it measures the gap.</p>`, 'Calibrate');
     if (!ok) return;
     const result = await window.labelStudio.calibratePrinter(state.settings, state.template);
-    setStatus(`Calibration sent: job ${result.jobId}`);
     await refreshPrinterDiagnostics();
-    alert(`Calibration sent as job ${result.jobId}.\nHeight dots: ${result.heightDots}\nGap dots: ${result.gapDots}\n\nNow print 5 labels only. If it still drifts, switch to Continuous Pitch mode and tune Pitch mm.`);
+    setStatus(`Calibrated (job ${result.jobId}, ${result.heightDots} + ${result.gapDots} dots). Next: print 5 test labels.`, 'ok');
   } catch (error) {
-    setStatus(error.message || String(error));
-    alert(error.message || String(error));
+    setStatus(error.message || String(error), 'error');
   }
 }
 
@@ -640,6 +727,7 @@ function renderPrinterDiagnostics(diag) {
     : '<div class="notice good">No major driver/template mismatch detected.</div>';
   $('mismatchReport').innerHTML = report;
   $('printerRawTicket').value = diag.rawTicket || '';
+  setPrinterCard(!p.WorkOffline && !!p.Name, p.WorkOffline ? 'Offline' : p.Name ? `Ready · ${p.PortName || ''}` : 'Not found', p.Name);
 }
 
 function renderAll() {
@@ -651,8 +739,50 @@ function renderAll() {
   updateDesignCopySummary();
 }
 
-function setStatus(text) {
+function setStatus(text, kind = 'info') {
   $('saveStatus').textContent = text;
+  toast(text, kind);
+}
+
+function toast(text, kind = 'info') {
+  const host = document.getElementById('toasts');
+  if (!host) return;
+  const el = document.createElement('div');
+  el.className = `toast ${kind}`;
+  el.textContent = text;
+  host.appendChild(el);
+  setTimeout(() => { el.classList.add('out'); setTimeout(() => el.remove(), 300); }, kind === 'error' ? 7000 : 3500);
+}
+
+function ask(title, html, okLabel = 'Continue') {
+  return new Promise(resolve => {
+    $('askTitle').textContent = title;
+    $('askBody').innerHTML = html;
+    $('askOk').textContent = okLabel;
+    $('askModal').classList.remove('hidden');
+    $('askOk').focus();
+    const done = value => {
+      $('askModal').classList.add('hidden');
+      $('askOk').onclick = $('askCancel').onclick = $('askModal').onclick = document.onkeydown = null;
+      resolve(value);
+    };
+    $('askOk').onclick = () => done(true);
+    $('askCancel').onclick = () => done(false);
+    $('askModal').onclick = e => { if (e.target.id === 'askModal') done(false); };
+    document.onkeydown = e => { if (e.key === 'Escape') done(false); };
+  });
+}
+
+function setPrinterCard(ok, stateText, name) {
+  $('pcDot').className = `dot ${ok ? 'ok' : 'bad'}`;
+  $('pcState').textContent = stateText;
+  if (name) $('pcName').textContent = name;
+  const t = state.template || {};
+  $('pcStock').textContent = `${t.widthMm || 63.5} × ${t.heightMm || 38.1} mm`;
+  const sensor = state.settings?.feedMode === 'SensorGap';
+  $('pcMode').textContent = sensor ? 'Sensor gap' : 'Continuous';
+  $('useSensorBtn').classList.toggle('on', sensor);
+  $('useContinuousBtn').classList.toggle('on', !sensor);
 }
 
 function id() {
@@ -668,6 +798,7 @@ function normalizeHeader(header) {
   if (value === 'barcode') return 'code';
   if (value === 'price') return 'amount';
   if (value === 'qty' || value === 'copies') return 'quantity';
+  if (value === 'productname' || value === 'name' || value === 'description' || value === 'item') return 'product';
   return value;
 }
 
@@ -684,10 +815,6 @@ function expandRowsForPreview(rows) {
   return expanded;
 }
 
-function barcodePreviewWidth(el) {
-  return Math.max(220, Number(el.previewWidth || 270));
-}
-
 function currentDesignRow() {
   const row = { ...sample };
   for (const el of state.template.elements || []) {
@@ -695,6 +822,13 @@ function currentDesignRow() {
   }
   row.quantity = Math.max(1, Number($('designCopies').value || 1) || 1);
   return row;
+}
+
+function valueForField(row, field, fallback = '') {
+  if (!row) return fallback || '';
+  if (field === 'reference') return row.reference || row.product || fallback || '';
+  if (field === 'product') return row.product || row.reference || fallback || '';
+  return row[field] || fallback || '';
 }
 
 function updateDesignCopySummary() {
@@ -721,7 +855,6 @@ function roundRect(targetCtx, x, y, width, height, radius, fill, stroke) {
 }
 
 init().then(renderAssets).catch(error => {
-  setStatus(error.message || String(error));
-  alert(error.message || String(error));
+  setStatus(error.message || String(error), 'error');
 });
 

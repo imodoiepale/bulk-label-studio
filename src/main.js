@@ -27,8 +27,8 @@ function defaultSettings() {
     labelWidthMm: 63.5,
     labelHeightMm: 38.1,
     pitchMm: 41.1,
-    gapMm: 0,
-    feedMode: 'ContinuousPitch',
+    gapMm: 3,
+    feedMode: 'SensorGap',
     maxBatch: 500,
     defaultTemplate: 'Standard Receipt'
   };
@@ -96,8 +96,8 @@ function seedTemplate() {
     widthMm: 63.5,
     heightMm: 38.1,
     pitchMm: 41.1,
-    feedMode: 'ContinuousPitch',
-    gapMm: 0,
+    feedMode: 'SensorGap',
+    gapMm: 3,
     elements: [
       { id: cryptoId(), type: 'text', label: 'Title', field: 'title', x: 72, y: 24, size: 1, value: 'VALID FOR 3 MONTHS ONLY' },
       { id: cryptoId(), type: 'barcode', label: 'Barcode', field: 'code', x: 78, y: 64, height: 72, narrow: 2, wide: 4, value: '12345678' },
@@ -115,26 +115,165 @@ function cryptoId() {
 function rowsFromText(text) {
   const lines = String(text || '').split(/\r?\n/).map(x => x.trim()).filter(Boolean);
   if (!lines.length) return [];
-  const splitLine = line => line.includes('\t') ? line.split('\t') : line.split(',');
-  const first = splitLine(lines[0]).map(x => x.trim().toLowerCase());
-  const hasHeader = first.some(x => ['code', 'barcode', 'reference', 'amount', 'price', 'title'].includes(x));
-  const headers = hasHeader ? first : ['code', 'reference', 'amount', 'title'];
+  const delimiter = detectDelimiter(lines[0]);
+  const first = parseDelimitedLine(lines[0], delimiter).map(normalizeHeader);
+  const hasHeader = first.some(x => ['code', 'product', 'reference', 'amount', 'title', 'quantity'].includes(x));
+  const headers = hasHeader ? first : ['code', 'reference', 'amount', 'title', 'quantity'];
   const start = hasHeader ? 1 : 0;
-  return lines.slice(start).map(line => {
-    const parts = splitLine(line).map(x => x.trim().replace(/^"|"$/g, ''));
-    const row = {};
+  return rowsFromMatrix(lines.slice(start).map(line => parseDelimitedLine(line, delimiter)), headers);
+}
+
+function rowsFromMatrix(matrix, headers) {
+  return (matrix || []).map(parts => {
+    const raw = {};
     headers.forEach((key, index) => {
-      const normalized = key === 'barcode' ? 'code' : key === 'price' ? 'amount' : key;
-      row[normalized] = parts[index] || '';
+      if (!key) return;
+      raw[key] = String(parts[index] ?? '').trim();
     });
-    return {
-      code: row.code || '',
-      reference: row.reference || '',
-      amount: row.amount || '',
-      title: row.title || 'VALID FOR 3 MONTHS ONLY',
-      quantity: Number(row.quantity || row.qty || row.copies || 1) || 1
-    };
+    return normalizeProductRow(raw);
   }).filter(row => row.code);
+}
+
+function normalizeProductRow(row) {
+  const product = row.product || row.name || row.description || row.item || row.itemname || '';
+  const reference = row.reference || row.ref || row.sku || row.productcode || row.itemcode || product || '';
+  const amount = row.amount || row.price || row.value || row.cost || '';
+  return {
+    code: String(row.code || row.barcode || row.upc || row.ean || row.qrcode || '').trim(),
+    product: String(product || reference || '').trim(),
+    reference: String(reference || product || '').trim(),
+    amount: String(amount || '').trim(),
+    title: String(row.title || row.label || row.message || 'VALID FOR 3 MONTHS ONLY').trim(),
+    quantity: Math.max(1, Number(row.quantity || row.qty || row.copies || row.count || 1) || 1)
+  };
+}
+
+function normalizeHeader(header) {
+  const value = String(header || '').toLowerCase().trim().replace(/[^a-z0-9]+/g, '');
+  const aliases = {
+    barcode: 'code',
+    barcodeno: 'code',
+    barcodevalue: 'code',
+    code39: 'code',
+    upc: 'code',
+    ean: 'code',
+    qrcode: 'code',
+    product: 'product',
+    productname: 'product',
+    name: 'product',
+    item: 'product',
+    itemname: 'product',
+    description: 'product',
+    ref: 'reference',
+    sku: 'reference',
+    productcode: 'reference',
+    itemcode: 'reference',
+    price: 'amount',
+    sellingprice: 'amount',
+    cost: 'amount',
+    value: 'amount',
+    qty: 'quantity',
+    copies: 'quantity',
+    count: 'quantity',
+    label: 'title',
+    message: 'title'
+  };
+  return aliases[value] || value;
+}
+
+function detectDelimiter(line) {
+  if (String(line).includes('\t')) return '\t';
+  if (String(line).includes(';')) return ';';
+  return ',';
+}
+
+function parseDelimitedLine(line, delimiter) {
+  const out = [];
+  let value = '';
+  let quote = false;
+  const text = String(line || '');
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (ch === '"') {
+      if (quote && text[i + 1] === '"') {
+        value += '"';
+        i++;
+      } else {
+        quote = !quote;
+      }
+    } else if (ch === delimiter && !quote) {
+      out.push(value.trim());
+      value = '';
+    } else {
+      value += ch;
+    }
+  }
+  out.push(value.trim());
+  return out;
+}
+
+async function rowsFromWorkbook(filePath) {
+  const ps = `
+Add-Type -AssemblyName System.IO.Compression.FileSystem
+$file = $env:BULK_LABEL_IMPORT_FILE
+$zip = [System.IO.Compression.ZipFile]::OpenRead($file)
+try {
+  $shared = @()
+  $sharedEntry = $zip.GetEntry('xl/sharedStrings.xml')
+  if ($sharedEntry) {
+    $reader = New-Object System.IO.StreamReader($sharedEntry.Open())
+    try { [xml]$sharedXml = $reader.ReadToEnd() } finally { $reader.Dispose() }
+    foreach ($si in $sharedXml.sst.si) {
+      if ($si.t) { $shared += [string]$si.t }
+      elseif ($si.r) { $shared += (($si.r | ForEach-Object { [string]$_.t }) -join '') }
+      else { $shared += '' }
+    }
+  }
+  $sheetEntry = $zip.GetEntry('xl/worksheets/sheet1.xml')
+  if (-not $sheetEntry) { throw 'The workbook has no first worksheet at xl/worksheets/sheet1.xml.' }
+  $reader = New-Object System.IO.StreamReader($sheetEntry.Open())
+  try { [xml]$sheetXml = $reader.ReadToEnd() } finally { $reader.Dispose() }
+  $rows = @()
+  foreach ($row in $sheetXml.worksheet.sheetData.row) {
+    $cells = @{}
+    $max = -1
+    foreach ($c in $row.c) {
+      $ref = [string]$c.r
+      $letters = ($ref -replace '\\d','')
+      $col = 0
+      foreach ($char in $letters.ToCharArray()) { $col = ($col * 26) + ([int][char]$char - [int][char]'A' + 1) }
+      $idx = $col - 1
+      $max = [Math]::Max($max, $idx)
+      $value = ''
+      if ($c.t -eq 's') {
+        $si = 0
+        [void][int]::TryParse([string]$c.v, [ref]$si)
+        if ($si -lt $shared.Count) { $value = $shared[$si] }
+      } elseif ($c.t -eq 'inlineStr') {
+        $value = [string]$c.is.t
+      } else {
+        $value = [string]$c.v
+      }
+      $cells[$idx] = $value
+    }
+    if ($max -ge 0) {
+      $arr = @()
+      for ($i = 0; $i -le $max; $i++) { $arr += [string]$cells[$i] }
+      $rows += [pscustomobject]@{ cells = @($arr) }
+    }
+  }
+  $rows | ConvertTo-Json -Depth 6
+} finally {
+  $zip.Dispose()
+}
+`;
+  const json = await runPowerShellCommand(ps, { BULK_LABEL_IMPORT_FILE: filePath });
+  const parsed = JSON.parse(json || '[]');
+  const objects = Array.isArray(parsed) ? parsed : [parsed];
+  const rows = objects.map(row => Array.isArray(row) ? row : row.cells).filter(Boolean);
+  if (!rows.length) return [];
+  const headers = rows[0].map(normalizeHeader);
+  return rowsFromMatrix(rows.slice(1), headers);
 }
 
 function expandRows(rows) {
@@ -150,7 +289,7 @@ function buildTspl(template, settings, rows) {
   rows = expandRows(rows);
   const useSensor = settings.feedMode === 'SensorGap';
   const height = useSensor ? Number(template.heightMm || settings.labelHeightMm) : Number(template.pitchMm || settings.pitchMm);
-  const gap = useSensor ? Number(template.gapMm ?? settings.gapMm) : 0;
+  const gap = useSensor ? (Number(template.gapMm) || Number(settings.gapMm) || 3) : 0;
   const width = Number(template.widthMm || settings.labelWidthMm);
   const lines = [
     `SIZE ${width} mm,${height} mm`,
@@ -163,7 +302,7 @@ function buildTspl(template, settings, rows) {
   for (const row of rows) {
     lines.push('CLS');
     for (const el of template.elements || []) {
-      const value = String(row[el.field] || el.value || '').replace(/["\r\n]/g, '');
+      const value = String(valueForField(row, el.field, el.value)).replace(/["\r\n]/g, '');
       if (el.type === 'barcode') {
         const code = value.replace(/[^A-Za-z0-9\-.\/+% ]/g, '');
         lines.push(`BARCODE ${Math.round(el.x)},${Math.round(el.y)},"39",${Math.round(el.height || 72)},0,0,${Math.round(el.narrow || 2)},${Math.round(el.wide || 4)},"${code}"`);
@@ -174,6 +313,13 @@ function buildTspl(template, settings, rows) {
     lines.push('PRINT 1,1');
   }
   return lines.join('\r\n') + '\r\n';
+}
+
+function valueForField(row, field, fallback = '') {
+  if (!row) return fallback || '';
+  if (field === 'reference') return row.reference || row.product || fallback || '';
+  if (field === 'product') return row.product || row.reference || fallback || '';
+  return row[field] || fallback || '';
 }
 
 ipcMain.handle('settings:get', () => {
@@ -204,6 +350,29 @@ ipcMain.handle('templates:save', (_event, template) => {
 });
 
 ipcMain.handle('rows:parse', (_event, text) => rowsFromText(text));
+
+ipcMain.handle('rows:import', async () => {
+  const result = await dialog.showOpenDialog({
+    filters: [
+      { name: 'Product data', extensions: ['xlsx', 'csv', 'tsv', 'txt'] },
+      { name: 'Excel Workbook', extensions: ['xlsx'] },
+      { name: 'CSV / TSV', extensions: ['csv', 'tsv', 'txt'] }
+    ],
+    properties: ['openFile']
+  });
+  if (result.canceled || !result.filePaths[0]) return null;
+  const filePath = result.filePaths[0];
+  const ext = path.extname(filePath).toLowerCase();
+  let rows;
+  if (ext === '.xlsx') {
+    rows = await rowsFromWorkbook(filePath);
+  } else if (['.csv', '.tsv', '.txt'].includes(ext)) {
+    rows = rowsFromText(fs.readFileSync(filePath, 'utf8'));
+  } else {
+    throw new Error('Unsupported file type. Use .xlsx, .csv, .tsv, or .txt.');
+  }
+  return { filePath, rows };
+});
 
 ipcMain.handle('xml:open', async () => {
   const result = await dialog.showOpenDialog({ filters: [{ name: 'Label XML', extensions: ['labelxml', 'xml'] }], properties: ['openFile'] });
@@ -266,7 +435,7 @@ ipcMain.handle('printer:calibrate', async (_event, settings, template) => {
   const printerName = settings.printerName;
   const widthMm = Number(template?.widthMm || settings.labelWidthMm || 63.5);
   const heightMm = Number(template?.heightMm || settings.labelHeightMm || 38.1);
-  const gapMm = Number(template?.gapMm ?? settings.gapMm ?? 3);
+  const gapMm = Number(template?.gapMm) || Number(settings.gapMm) || 3;
   const heightDots = Math.round(heightMm / 25.4 * 203);
   const gapDots = Math.max(1, Math.round(gapMm / 25.4 * 203));
   const payload = [
