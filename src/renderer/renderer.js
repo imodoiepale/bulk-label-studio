@@ -1028,6 +1028,11 @@ async function calibratePrinter() {
   try {
     readSettingsForm();
     readTemplateForm();
+    const language = String(state.settings.printerLanguage || 'AUTO').toUpperCase();
+    if (language === 'EPL' || language === 'ZPL') {
+      setStatus(`${language} printers should be calibrated from the printer driver or physical feed/calibrate button. App sensor calibration is only for TSPL/Xprinter queues.`, 'error');
+      return;
+    }
     const ok = await ask('Recalibrate gap sensor?', `<dl>
       <dt>Printer</dt><dd>${escapeHtml(state.settings.printerName)}</dd>
       <dt>Label</dt><dd>${state.template.widthMm} × ${state.template.heightMm} mm</dd>
