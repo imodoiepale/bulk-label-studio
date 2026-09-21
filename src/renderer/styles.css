@@ -310,13 +310,17 @@ th.row-number { z-index: 4; }
   width: min(1480px, 100%);
   margin: 0 auto;
   display: grid;
-  grid-template-columns: minmax(420px, .88fr) minmax(520px, 1.12fr);
+  grid-template-columns: minmax(620px, 1.1fr) minmax(520px, .9fr);
   gap: 16px;
   align-items: start;
 }
 .bulk-input-card, .bulk-preview-card { min-height: calc(100vh - 174px); }
+.bulk-input-card .table-preview {
+  flex: 1;
+  min-height: 300px;
+}
 .bulk-input-card textarea {
-  min-height: 430px;
+  min-height: 170px;
   resize: vertical;
   white-space: pre;
   overflow: auto;
@@ -353,6 +357,31 @@ th.row-number { z-index: 4; }
 }
 .csv-shell textarea:focus {
   box-shadow: inset 0 0 0 2px rgba(201, 162, 74, .45);
+}
+.csv-details {
+  margin-top: 4px;
+}
+.csv-details summary {
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 650;
+  user-select: none;
+}
+.inline-preview-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: #ecebe5;
+  scrollbar-gutter: stable both-edges;
+}
+#bulkInlinePreviewCanvas {
+  display: block;
+  width: 100%;
+  min-width: 620px;
+  height: auto;
 }
 
 /* Printer */

@@ -158,34 +158,39 @@
         <section class="panel bulk-input-card">
           <div class="panel-head">
             <div>
-              <div class="section-title">Products and barcodes</div>
-              <p class="muted">Upload Excel/CSV or paste rows. Every row prints its own barcode.</p>
+              <div class="section-title">Product Data Table</div>
+              <p class="muted">Live rows from Excel/CSV. This table is what will print.</p>
             </div>
-            <button id="importRowsBtn"><svg><use href="#i-folder"/></svg>Upload Excel/CSV</button>
+            <div class="row-actions">
+              <button id="csvTemplateBtn"><svg><use href="#i-save"/></svg>CSV / Excel Template</button>
+              <button id="importRowsBtn"><svg><use href="#i-folder"/></svg>Upload Excel/CSV</button>
+            </div>
           </div>
-          <div class="csv-shell">
-            <div class="csv-toolbar">
-              <span>CSV / Excel paste area</span>
-              <b>No wrap · scroll to inspect every column</b>
-            </div>
-            <textarea id="bulkText" spellcheck="false" wrap="off">code,product,reference,amount,title,quantity
+          <div id="rowPreview" class="table-preview"><div class="empty">Loading product rows…</div></div>
+          <details class="csv-details">
+            <summary>Raw CSV / Excel paste editor</summary>
+            <div class="csv-shell">
+              <div class="csv-toolbar">
+                <span>CSV / Excel paste area</span>
+                <b>No wrap · edits update table automatically</b>
+              </div>
+              <textarea id="bulkText" spellcheck="false" wrap="off">code,product,reference,amount,title,quantity
 12345678,Leather Wallet,CU10000 - 094,"KES 10,000/-",VALID FOR 3 MONTHS ONLY,5
 98765432,Gift Voucher,CU10000 - 095,"KES 5,000/-",VALID FOR 3 MONTHS ONLY,2</textarea>
-          </div>
-          <div class="row-actions">
-            <button id="csvTemplateBtn"><svg><use href="#i-save"/></svg>Download CSV Template</button>
-            <button id="previewRowsPaperBtn"><svg><use href="#i-eye"/></svg>Paper Preview</button>
-            <button id="printRowsBtn" class="primary"><svg><use href="#i-play"/></svg>Print Table Rows</button>
-          </div>
+            </div>
+          </details>
         </section>
         <section class="panel bulk-preview-card">
           <div class="panel-head">
             <div>
-              <div class="section-title">Print Preview Table</div>
-              <p class="muted">Numbered rows with borders. What you see here is what will be sent to the printer.</p>
+              <div class="section-title">Live Label Preview</div>
+              <p class="muted">Automatic 2-column preview from the table rows.</p>
             </div>
+            <button id="printRowsBtn" class="primary"><svg><use href="#i-play"/></svg>Print Table Rows</button>
           </div>
-          <div id="rowPreview" class="table-preview"><div class="empty">Loading product rows…</div></div>
+          <div class="inline-preview-scroll">
+            <canvas id="bulkInlinePreviewCanvas" width="760" height="620"></canvas>
+          </div>
         </section>
       </div>
     </section>

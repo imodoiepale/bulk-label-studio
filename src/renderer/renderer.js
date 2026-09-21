@@ -66,6 +66,8 @@ const canvas = $('labelCanvas');
 const ctx = canvas.getContext('2d');
 const paperCanvas = $('paperPreviewCanvas');
 const paperCtx = paperCanvas.getContext('2d');
+const bulkInlineCanvas = $('bulkInlinePreviewCanvas');
+const bulkInlineCtx = bulkInlineCanvas.getContext('2d');
 
 const sample = {
   code: '12345678',
@@ -190,10 +192,6 @@ function bindBulk() {
   $('importRowsBtn').addEventListener('click', importRowsFile);
   $('csvTemplateBtn').addEventListener('click', saveCsvTemplate);
   $('bulkText').addEventListener('input', scheduleBulkParse);
-  $('previewRowsPaperBtn').addEventListener('click', async () => {
-    await flushBulkRows();
-    if (state.rows.length) openPaperPreview(state.rows);
-  });
   $('printRowsBtn').addEventListener('click', async () => {
     await flushBulkRows();
     if (!state.rows.length) return;
@@ -562,6 +560,7 @@ async function parseRows(options = {}) {
   state.rows = rows;
   state.bulkParseDirty = false;
   $('rowPreview').innerHTML = rowsTable(state.rows);
+  drawBulkInlinePreview(state.rows);
   const msg = state.rows.length
     ? `${state.rows.length} product row(s), ${labelCount(state.rows)} label(s) ready`
     : analysis.note || 'No printable rows found. Check that your file has a barcode/code column.';
@@ -670,52 +669,57 @@ function rowsToText(rows) {
   return [headers.join('\t'), ...(rows || []).map(row => headers.map(h => String(row[h] ?? '').replace(/\t/g, ' ')).join('\t'))].join('\n');
 }
 
+function drawBulkInlinePreview(rows) {
+  const previewRows = expandRowsForPreview(rows && rows.length ? rows : [currentDesignRow()]).slice(0, 10);
+  drawLabelCardPreview(bulkInlineCanvas, bulkInlineCtx, previewRows, { cols: 2, maxScale: 0.46, title: 'Live preview' });
+}
+
 function openPaperPreview(rows = null) {
   const validRows = Array.isArray(rows) ? rows : null;
   const sourceRows = validRows || (state.rows.length ? state.rows : [currentDesignRow()]);
   const previewRows = expandRowsForPreview(sourceRows).slice(0, 10);
-  drawPaperPreview(previewRows);
+  drawLabelCardPreview(paperCanvas, paperCtx, previewRows, { cols: paperCanvas.width >= 1040 ? 5 : paperCanvas.width >= 840 ? 4 : paperCanvas.width >= 620 ? 3 : 2, maxScale: 0.36, title: 'Compact preview' });
   $('paperPreviewModal').classList.remove('hidden');
 }
 
-function drawPaperPreview(rows) {
+function drawLabelCardPreview(targetCanvas, targetCtx, rows, options = {}) {
   const visibleRows = rows.length ? rows : [currentDesignRow()];
   const labelDotsW = mmToDots(state.template.widthMm || 63.5);
   const labelDotsH = mmToDots(state.template.heightMm || 38.1);
   const pitchDots = mmToDots(state.template.pitchMm || 41.1);
-  const cols = paperCanvas.width >= 1040 ? 5 : paperCanvas.width >= 840 ? 4 : paperCanvas.width >= 620 ? 3 : 2;
-  const gapX = 18;
-  const gapY = 18;
-  const scale = Math.min(0.36, (paperCanvas.width - 80 - (cols - 1) * gapX) / (labelDotsW * cols));
+  const cols = Math.max(1, Number(options.cols || 2));
+  const gapX = Number(options.gapX || 18);
+  const gapY = Number(options.gapY || 18);
+  const scale = Math.min(Number(options.maxScale || 0.42), (targetCanvas.width - 80 - (cols - 1) * gapX) / (labelDotsW * cols));
   const labelW = labelDotsW * scale;
   const labelH = labelDotsH * scale;
   const pitch = Math.max(pitchDots * scale, labelH + 16);
-  const left = Math.max(24, (paperCanvas.width - (cols * labelW + (cols - 1) * gapX)) / 2);
+  const left = Math.max(24, (targetCanvas.width - (cols * labelW + (cols - 1) * gapX)) / 2);
   const rowsNeeded = Math.ceil(visibleRows.length / cols);
   const requiredHeight = Math.max(640, 72 + rowsNeeded * (pitch + gapY) + 64);
-  if (paperCanvas.height !== Math.ceil(requiredHeight)) paperCanvas.height = Math.ceil(requiredHeight);
-  paperCtx.clearRect(0, 0, paperCanvas.width, paperCanvas.height);
-  paperCtx.fillStyle = '#ecebe5';
-  paperCtx.fillRect(0, 0, paperCanvas.width, paperCanvas.height);
-  paperCtx.fillStyle = '#16181d';
-  paperCtx.font = '600 16px "Segoe UI"';
-  paperCtx.fillText(`Compact preview · ${visibleRows.length} label(s) shown · ${state.template.widthMm}mm x ${state.template.heightMm}mm`, 24, 34);
+  if (targetCanvas.height !== Math.ceil(requiredHeight)) targetCanvas.height = Math.ceil(requiredHeight);
+  targetCtx.clearRect(0, 0, targetCanvas.width, targetCanvas.height);
+  targetCtx.fillStyle = '#ecebe5';
+  targetCtx.fillRect(0, 0, targetCanvas.width, targetCanvas.height);
+  targetCtx.fillStyle = '#16181d';
+  targetCtx.font = '600 16px "Segoe UI"';
+  targetCtx.fillText(`${options.title || 'Preview'} · ${visibleRows.length} label(s) shown · ${state.template.widthMm}mm x ${state.template.heightMm}mm`, 24, 34);
   visibleRows.forEach((row, index) => {
     const col = index % cols;
     const rowIndex = Math.floor(index / cols);
     const x = left + col * (labelW + gapX);
     const y = 62 + rowIndex * (pitch + gapY);
-    paperCtx.fillStyle = '#e2dbc4';
-    roundRect(paperCtx, x - 10, y - 10, labelW + 20, pitch + 14, 12, true, false);
-    paperCtx.fillStyle = '#fff';
-    roundRect(paperCtx, x, y, labelW, labelH, 12, true, false);
-    paperCtx.strokeStyle = '#c9a24a';
-    paperCtx.lineWidth = 1.5;
-    roundRect(paperCtx, x, y, labelW, labelH, 12, false, true);
-    drawTemplateOnContext(paperCtx, row, x, y, scale);
-    paperCtx.fillStyle = '#8a7a4a';
-    paperCtx.font = '700 12px "Segoe UI"';
-    paperCtx.fillText(`#${index + 1}`, x + labelW - 28, y + 18);
+    targetCtx.fillStyle = '#e2dbc4';
+    roundRect(targetCtx, x - 10, y - 10, labelW + 20, pitch + 14, 12, true, false);
+    targetCtx.fillStyle = '#fff';
+    roundRect(targetCtx, x, y, labelW, labelH, 12, true, false);
+    targetCtx.strokeStyle = '#c9a24a';
+    targetCtx.lineWidth = 1.5;
+    roundRect(targetCtx, x, y, labelW, labelH, 12, false, true);
+    drawTemplateOnContext(targetCtx, row, x, y, scale);
+    targetCtx.fillStyle = '#8a7a4a';
+    targetCtx.font = '700 12px "Segoe UI"';
+    targetCtx.fillText(`#${index + 1}`, x + labelW - 28, y + 18);
   });
 }
 
