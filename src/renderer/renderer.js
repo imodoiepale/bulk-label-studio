@@ -184,6 +184,7 @@ function bindDesigner() {
 
 function bindBulk() {
   $('importRowsBtn').addEventListener('click', importRowsFile);
+  $('csvTemplateBtn').addEventListener('click', saveCsvTemplate);
   $('parseRowsBtn').addEventListener('click', parseRows);
   $('previewRowsPaperBtn').addEventListener('click', async () => {
     await parseRows();
@@ -536,10 +537,31 @@ function estimateElementBounds(el) {
 }
 
 async function parseRows() {
+  analyzeBulkText($('bulkText').value);
   state.rows = await window.labelStudio.parseRows($('bulkText').value);
   $('rowPreview').innerHTML = rowsTable(state.rows);
-  setStatus(`${state.rows.length} product row(s), ${labelCount(state.rows)} label(s) ready`);
+  const msg = state.rows.length
+    ? `${state.rows.length} product row(s), ${labelCount(state.rows)} label(s) ready`
+    : 'No printable rows found. Check that your file has a barcode/code column.';
+  setStatus(msg, state.rows.length ? 'info' : 'error');
   return state.rows;
+}
+
+function saveCsvTemplate() {
+  const template = `barcode,product,reference,amount,title,quantity
+12345678,Leather Wallet,CU10000 - 094,"KES 10,000/-",VALID FOR 3 MONTHS ONLY,5
+98765432,Gift Voucher,CU10000 - 095,"KES 5,000/-",VALID FOR 3 MONTHS ONLY,2`;
+  $('bulkText').value = template;
+  const blob = new Blob([template + '\n'], { type: 'text/csv;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = 'bulk-label-product-template.csv';
+  link.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+  analyzeBulkText(template);
+  parseRows();
+  setStatus('Default CSV template downloaded and loaded for editing.', 'ok');
 }
 
 async function importRowsFile() {
@@ -549,12 +571,52 @@ async function importRowsFile() {
     state.rows = result.rows || [];
     $('rowPreview').innerHTML = rowsTable(state.rows);
     $('bulkText').value = rowsToText(state.rows);
+    analyzeBulkText($('bulkText').value);
     const name = result.filePath ? result.filePath.split(/[\\/]/).pop() : 'uploaded file';
     setStatus(`Loaded ${state.rows.length} product row(s) from ${name}; ${labelCount(state.rows)} label(s) ready`, 'ok');
     if (state.rows.length) openPaperPreview(state.rows);
   } catch (error) {
     setStatus(error.message || String(error), 'error');
   }
+}
+
+function analyzeBulkText(text) {
+  const firstLine = String(text || '').split(/\r?\n/).find(line => line.trim());
+  if (!firstLine) return;
+  const separator = firstLine.includes('\t') ? '\t' : firstLine.includes(';') ? ';' : ',';
+  const headers = parseClientDelimitedLine(firstLine, separator).map(normalizeHeader);
+  const missing = [];
+  if (!headers.includes('code')) missing.push('barcode/code');
+  const detected = headers.filter(Boolean).join(', ');
+  const note = missing.length
+    ? `Template check: missing ${missing.join(', ')} column. Detected: ${detected || 'none'}.`
+    : `Template check: detected columns ${detected}.`;
+  setStatus(note, missing.length ? 'error' : 'ok');
+}
+
+function parseClientDelimitedLine(line, delimiter) {
+  const out = [];
+  let value = '';
+  let quote = false;
+  const text = String(line || '');
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (ch === '"') {
+      if (quote && text[i + 1] === '"') {
+        value += '"';
+        i++;
+      } else {
+        quote = !quote;
+      }
+    } else if (ch === delimiter && !quote) {
+      out.push(value.trim());
+      value = '';
+    } else {
+      value += ch;
+    }
+  }
+  out.push(value.trim());
+  return out;
 }
 
 async function parseDesignerRows() {
@@ -574,7 +636,13 @@ async function startPrintProcess() {
 function rowsTable(rows) {
   const headers = ['code', 'product', 'reference', 'amount', 'title', 'quantity'];
   if (!rows.length) return '<div class="empty">No rows ready.</div>';
-  return `<table><thead><tr>${headers.map(h => `<th>${h}</th>`).join('')}</tr></thead><tbody>${rows.map(row => `<tr>${headers.map(h => `<td>${escapeHtml(row[h] || '')}</td>`).join('')}</tr>`).join('')}</tbody></table>`;
+  const total = labelCount(rows);
+  const body = rows.map((row, index) => `<tr>
+    <td class="row-number">${index + 1}</td>
+    ${headers.map(h => `<td title="${escapeHtml(row[h] || '')}">${escapeHtml(row[h] || '')}</td>`).join('')}
+  </tr>`).join('');
+  return `<div class="table-meta">${rows.length} product row(s) · ${total} label(s) queued</div>
+  <table class="data-grid"><thead><tr><th class="row-number">#</th>${headers.map(h => `<th>${h}</th>`).join('')}</tr></thead><tbody>${body}</tbody></table>`;
 }
 
 function rowsToText(rows) {
@@ -591,18 +659,34 @@ function openPaperPreview(rows = null) {
 }
 
 function drawPaperPreview(rows) {
+  const visibleRows = rows.length ? rows : [currentDesignRow()];
+  const labelDotsW = mmToDots(state.template.widthMm || 63.5);
+  const labelDotsH = mmToDots(state.template.heightMm || 38.1);
+  const pitchDots = mmToDots(state.template.pitchMm || 41.1);
+  const scale = Math.min(0.62, (paperCanvas.width - 120) / (labelDotsW * 2 + 48));
+  const labelW = labelDotsW * scale;
+  const labelH = labelDotsH * scale;
+  const pitch = Math.max(pitchDots * scale, labelH + 16);
+  const cols = paperCanvas.width >= 920 ? 2 : 1;
+  const gapX = 40;
+  const gapY = 26;
+  const left = Math.max(24, (paperCanvas.width - (cols * labelW + (cols - 1) * gapX)) / 2);
+  const rowsNeeded = Math.ceil(visibleRows.length / cols);
+  const requiredHeight = Math.max(640, 72 + rowsNeeded * (pitch + gapY) + 64);
+  if (paperCanvas.height !== Math.ceil(requiredHeight)) paperCanvas.height = Math.ceil(requiredHeight);
   paperCtx.clearRect(0, 0, paperCanvas.width, paperCanvas.height);
   paperCtx.fillStyle = '#ecebe5';
   paperCtx.fillRect(0, 0, paperCanvas.width, paperCanvas.height);
-  const scale = Math.min(1.35, (paperCanvas.width - 80) / mmToDots(state.template.widthMm || 63.5));
-  const labelW = mmToDots(state.template.widthMm || 63.5) * scale;
-  const labelH = mmToDots(state.template.heightMm || 38.1) * scale;
-  const pitch = mmToDots(state.template.pitchMm || 41.1) * scale;
-  const x = (paperCanvas.width - labelW) / 2;
-  let y = 32;
-  paperCtx.fillStyle = '#e2dbc4';
-  roundRect(paperCtx, x - 18, 14, labelW + 36, Math.min(paperCanvas.height - 28, pitch * rows.length + 40), 12, true, false);
-  rows.forEach((row, index) => {
+  paperCtx.fillStyle = '#16181d';
+  paperCtx.font = '600 16px "Segoe UI"';
+  paperCtx.fillText(`Compact preview · ${visibleRows.length} label(s) shown · ${state.template.widthMm}mm x ${state.template.heightMm}mm`, 24, 34);
+  visibleRows.forEach((row, index) => {
+    const col = index % cols;
+    const rowIndex = Math.floor(index / cols);
+    const x = left + col * (labelW + gapX);
+    const y = 62 + rowIndex * (pitch + gapY);
+    paperCtx.fillStyle = '#e2dbc4';
+    roundRect(paperCtx, x - 10, y - 10, labelW + 20, pitch + 14, 12, true, false);
     paperCtx.fillStyle = '#fff';
     roundRect(paperCtx, x, y, labelW, labelH, 12, true, false);
     paperCtx.strokeStyle = '#c9a24a';
@@ -610,13 +694,9 @@ function drawPaperPreview(rows) {
     roundRect(paperCtx, x, y, labelW, labelH, 12, false, true);
     drawTemplateOnContext(paperCtx, row, x, y, scale);
     paperCtx.fillStyle = '#8a7a4a';
-    paperCtx.font = '600 11px "Segoe UI"';
-    paperCtx.fillText(`#${index + 1}`, x + labelW + 6, y + 14);
-    y += pitch;
+    paperCtx.font = '700 12px "Segoe UI"';
+    paperCtx.fillText(`#${index + 1}`, x + labelW - 28, y + 18);
   });
-  paperCtx.fillStyle = '#16181d';
-  paperCtx.font = '600 13px "Segoe UI"';
-  paperCtx.fillText(`Previewing ${rows.length} label(s) · ${state.template.widthMm}mm x ${state.template.heightMm}mm · pitch ${state.template.pitchMm}mm`, 24, paperCanvas.height - 20);
 }
 
 function drawTemplateOnContext(targetCtx, row, offsetX, offsetY, scale) {
@@ -794,12 +874,36 @@ function escapeHtml(text) {
 }
 
 function normalizeHeader(header) {
-  const value = String(header || '').toLowerCase().trim();
-  if (value === 'barcode') return 'code';
-  if (value === 'price') return 'amount';
-  if (value === 'qty' || value === 'copies') return 'quantity';
-  if (value === 'productname' || value === 'name' || value === 'description' || value === 'item') return 'product';
-  return value;
+  const value = String(header || '').toLowerCase().trim().replace(/[^a-z0-9]+/g, '');
+  const aliases = {
+    barcode: 'code',
+    barcodeno: 'code',
+    barcodevalue: 'code',
+    code39: 'code',
+    upc: 'code',
+    ean: 'code',
+    qrcode: 'code',
+    product: 'product',
+    productname: 'product',
+    name: 'product',
+    item: 'product',
+    itemname: 'product',
+    description: 'product',
+    ref: 'reference',
+    sku: 'reference',
+    productcode: 'reference',
+    itemcode: 'reference',
+    price: 'amount',
+    sellingprice: 'amount',
+    cost: 'amount',
+    value: 'amount',
+    qty: 'quantity',
+    copies: 'quantity',
+    count: 'quantity',
+    label: 'title',
+    message: 'title'
+  };
+  return aliases[value] || value;
 }
 
 function labelCount(rows) {

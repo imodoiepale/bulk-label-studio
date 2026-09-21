@@ -154,8 +154,8 @@
     </section>
 
     <section id="bulk" class="page">
-      <div class="split">
-        <section class="panel">
+      <div class="bulk-center">
+        <section class="panel bulk-input-card">
           <div class="panel-head">
             <div>
               <div class="section-title">Products and barcodes</div>
@@ -163,16 +163,29 @@
             </div>
             <button id="importRowsBtn"><svg><use href="#i-folder"/></svg>Upload Excel/CSV</button>
           </div>
-          <textarea id="bulkText">code	reference	amount	title	quantity
-12345678	CU10000 - 094	KES 10,000/-	VALID FOR 3 MONTHS ONLY	5</textarea>
+          <div class="csv-shell">
+            <div class="csv-toolbar">
+              <span>CSV / Excel paste area</span>
+              <b>No wrap · scroll to inspect every column</b>
+            </div>
+            <textarea id="bulkText" spellcheck="false" wrap="off">code,product,reference,amount,title,quantity
+12345678,Leather Wallet,CU10000 - 094,"KES 10,000/-",VALID FOR 3 MONTHS ONLY,5
+98765432,Gift Voucher,CU10000 - 095,"KES 5,000/-",VALID FOR 3 MONTHS ONLY,2</textarea>
+          </div>
           <div class="row-actions">
+            <button id="csvTemplateBtn"><svg><use href="#i-save"/></svg>Save CSV Template</button>
             <button id="parseRowsBtn"><svg><use href="#i-eye"/></svg>Preview Rows</button>
             <button id="previewRowsPaperBtn"><svg><use href="#i-eye"/></svg>Paper Preview</button>
             <button id="printRowsBtn" class="primary"><svg><use href="#i-play"/></svg>Print Pasted Rows</button>
           </div>
         </section>
-        <section class="panel">
-          <div class="section-title">Preview</div>
+        <section class="panel bulk-preview-card">
+          <div class="panel-head">
+            <div>
+              <div class="section-title">Print Preview Table</div>
+              <p class="muted">Numbered rows with borders. What you see here is what will be sent to the printer.</p>
+            </div>
+          </div>
           <div id="rowPreview" class="table-preview"><div class="empty">No rows yet. Paste data and press Preview Rows.</div></div>
         </section>
       </div>
@@ -255,15 +268,17 @@
     </section>
 
     <div class="modal hidden" id="paperPreviewModal">
-      <div class="modal-card">
+      <div class="modal-card paper-dialog">
         <div class="modal-head">
           <div>
             <h3>Paper Preview</h3>
-            <p>How this template repeats on the roll before printing.</p>
+            <p>Compact card preview. Scroll to inspect every product/barcode before printing.</p>
           </div>
           <button id="closePaperPreviewBtn" class="icon" title="Close"><svg><use href="#i-x"/></svg></button>
         </div>
-        <canvas id="paperPreviewCanvas" width="700" height="920"></canvas>
+        <div class="paper-canvas-scroll">
+          <canvas id="paperPreviewCanvas" width="1100" height="920"></canvas>
+        </div>
       </div>
     </div>
 
