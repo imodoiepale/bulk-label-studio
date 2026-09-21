@@ -471,7 +471,7 @@ textarea.code { min-height: 260px; }
 .asset-list { display: grid; gap: 4px; }
 .asset-list button { justify-content: flex-start; overflow: hidden; text-overflow: ellipsis; box-shadow: none; }
 .asset-preview img { max-width: 100%; border-radius: 8px; }
-.settings-card { max-width: 480px; }
+.settings-card { max-width: 760px; }
 .settings-card button { align-self: flex-start; }
 
 /* Modals & toasts */

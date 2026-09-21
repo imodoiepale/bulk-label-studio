@@ -1,5 +1,6 @@
 const state = {
   settings: null,
+  printers: [],
   templates: [],
   template: null,
   selectedId: null,
@@ -32,6 +33,10 @@ if (!window.labelStudio) {
   window.labelStudio = {
     getSettings: async () => ({ printerName: 'Xprinter XP-370B', feedMode: 'SensorGap', maxBatch: 500 }),
     getPrinterDiagnostics: async () => ({ printer: { Name: 'Xprinter XP-370B', PortName: 'USB012', HorizontalResolution: 203, VerticalResolution: 203 }, queue: [], media: {} }),
+    listPrinters: async () => ([
+      { Name: 'Xprinter XP-370B', DriverName: 'Xprinter XP-370B', PortName: 'USB012', Default: true, WorkOffline: false, IsUsb: true, IsLabelLikely: true },
+      { Name: 'ZDesigner TLP 2844', DriverName: 'ZDesigner TLP 2844', PortName: 'USB013', Default: false, WorkOffline: false, IsUsb: true, IsLabelLikely: true }
+    ]),
     saveSettings: async () => true,
     listTemplates: async () => [{ file: 'preview', name: previewTemplate.name, template: structuredClone(previewTemplate) }],
     saveTemplate: async () => ({ file: 'preview' }),
@@ -106,6 +111,7 @@ async function init() {
   bindAssets();
   bindSettings();
   fillSettings();
+  await refreshPrinterList({ silent: true });
   renderAll();
   await parseRows({ silent: true });
   refreshPrinterDiagnostics();
@@ -215,6 +221,7 @@ function bindBulk() {
 }
 
 function bindPrinter() {
+  $('printerPageSelect').addEventListener('change', () => selectPrinterByName($('printerPageSelect').value, { save: true, refreshDiagnostics: true }));
   $('refreshPrinterBtn').addEventListener('click', refreshPrinterDiagnostics);
   $('calibratePrinterBtn').addEventListener('click', calibratePrinter);
   $('useContinuousBtn').addEventListener('click', async () => {
@@ -259,6 +266,8 @@ function bindAssets() {
 }
 
 function bindSettings() {
+  $('refreshPrintersBtn').addEventListener('click', () => refreshPrinterList());
+  $('printerSelect').addEventListener('change', () => selectPrinterByName($('printerSelect').value, { syncOnly: true }));
   $('saveSettingsBtn').addEventListener('click', async () => {
     readSettingsForm();
     await window.labelStudio.saveSettings(state.settings);
@@ -268,15 +277,96 @@ function bindSettings() {
 
 function fillSettings() {
   $('printerName').value = state.settings.printerName;
+  $('printerLanguage').value = state.settings.printerLanguage || 'AUTO';
   $('feedMode').value = state.settings.feedMode;
   $('maxBatch').value = state.settings.maxBatch;
+  renderPrinterSelects();
 }
 
 function readSettingsForm() {
   state.settings.printerName = $('printerName').value.trim() || 'Xprinter XP-370B';
+  state.settings.printerLanguage = $('printerLanguage').value || 'AUTO';
   state.settings.feedMode = $('feedMode').value;
   state.settings.maxBatch = Number($('maxBatch').value || 500);
   $('printerName').value = state.settings.printerName;
+}
+
+async function refreshPrinterList(options = {}) {
+  try {
+    state.printers = await window.labelStudio.listPrinters();
+    renderPrinterSelects();
+    const current = state.printers.find(p => p.Name === state.settings.printerName);
+    const best = state.printers.find(p => p.IsUsb && p.IsLabelLikely && !p.WorkOffline) ||
+      state.printers.find(p => p.IsUsb && p.IsLabelLikely) ||
+      state.printers.find(p => p.Default) ||
+      state.printers[0];
+    if (!current || (current.WorkOffline && best && best.Name !== current.Name)) {
+      if (best) {
+        selectPrinter(best, { syncOnly: true });
+        if (!options.silent) setStatus(`Selected detected printer: ${best.Name}`, 'info');
+      }
+    } else {
+      selectPrinter(current, { syncOnly: true });
+    }
+    $('printerListStatus').textContent = `${state.printers.length} printer(s) found. ${labelPrinters().length} label-like device(s).`;
+  } catch (error) {
+    $('printerListStatus').textContent = `Could not read printers: ${error.message || error}`;
+    setStatus(error.message || String(error), 'error');
+  }
+}
+
+function labelPrinters() {
+  return (state.printers || []).filter(p => p.IsUsb || p.IsLabelLikely);
+}
+
+function renderPrinterSelects() {
+  const printers = state.printers || [];
+  const options = printers.length
+    ? printers.map(p => `<option value="${escapeHtml(p.Name)}">${escapeHtml(printerOptionLabel(p))}</option>`).join('')
+    : `<option value="${escapeHtml(state.settings?.printerName || '')}">${escapeHtml(state.settings?.printerName || 'No printers found')}</option>`;
+  ['printerSelect', 'printerPageSelect'].forEach(idName => {
+    const select = $(idName);
+    if (!select) return;
+    select.innerHTML = options;
+    select.value = state.settings?.printerName || '';
+  });
+}
+
+function printerOptionLabel(printer) {
+  const flags = [];
+  if (printer.Default) flags.push('default');
+  if (printer.IsUsb) flags.push(printer.PortName || 'USB');
+  if (printer.IsLabelLikely) flags.push('label');
+  if (printer.WorkOffline) flags.push('offline');
+  return `${printer.Name}${flags.length ? ` — ${flags.join(', ')}` : ''}`;
+}
+
+function selectPrinterByName(name, options = {}) {
+  const printer = (state.printers || []).find(p => p.Name === name) || { Name: name };
+  return selectPrinter(printer, options);
+}
+
+async function selectPrinter(printer, options = {}) {
+  state.settings.printerName = printer.Name || state.settings.printerName;
+  state.settings.driverName = printer.DriverName || '';
+  $('printerName').value = state.settings.printerName;
+  if (($('printerLanguage').value || 'AUTO') === 'AUTO') {
+    state.settings.printerLanguage = autoPrinterLanguage(printer);
+    $('printerLanguage').value = state.settings.printerLanguage;
+  } else {
+    state.settings.printerLanguage = $('printerLanguage').value;
+  }
+  renderPrinterSelects();
+  setPrinterCard(!printer.WorkOffline, printer.PortName || printer.Name || 'Selected');
+  if (options.save) await window.labelStudio.saveSettings(state.settings);
+  if (options.refreshDiagnostics) await refreshPrinterDiagnostics();
+}
+
+function autoPrinterLanguage(printer = {}) {
+  const text = `${printer.Name || ''} ${printer.DriverName || ''}`.toLowerCase();
+  if (text.includes('zdesigner') || text.includes('zebra') || text.includes('tlp 2844')) return 'EPL';
+  if (text.includes('zpl')) return 'ZPL';
+  return 'TSPL';
 }
 
 function readTemplateForm() {
@@ -962,6 +1052,7 @@ function renderPrinterDiagnostics(diag) {
     ['Printer', p.Name || state.settings.printerName],
     ['Driver', p.DriverName || 'Unknown'],
     ['Port', p.PortName || 'Unknown'],
+    ['Language', state.settings.printerLanguage || 'AUTO'],
     ['Status', p.WorkOffline ? 'Offline' : 'Online / ready'],
     ['DPI', `${p.HorizontalResolution || '?'} x ${p.VerticalResolution || '?'}`],
     ['Queue', `${queueCount} job(s)`],

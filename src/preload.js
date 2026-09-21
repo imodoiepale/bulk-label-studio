@@ -13,6 +13,7 @@ const api = {
   listAssets: () => ipcRenderer.invoke('assets:list'),
   openData: () => ipcRenderer.invoke('app:openData'),
   print: payload => ipcRenderer.invoke('print:send', payload),
+  listPrinters: () => ipcRenderer.invoke('printer:list'),
   getPrinterDiagnostics: printerName => ipcRenderer.invoke('printer:diagnostics', printerName),
   calibratePrinter: (settings, template) => ipcRenderer.invoke('printer:calibrate', settings, template)
 };

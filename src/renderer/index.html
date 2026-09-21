@@ -213,7 +213,10 @@
         <section class="panel">
           <div class="panel-head">
             <div class="section-title">Live Printer Configuration</div>
-            <button id="refreshPrinterBtn"><svg><use href="#i-refresh"/></svg>Refresh</button>
+            <div class="row-actions">
+              <select id="printerPageSelect" title="Select printer"></select>
+              <button id="refreshPrinterBtn"><svg><use href="#i-refresh"/></svg>Refresh</button>
+            </div>
           </div>
           <div class="calibration-bar">
             <button id="calibratePrinterBtn" class="primary"><svg><use href="#i-target"/></svg>Recalibrate Gap Sensor</button>
@@ -267,7 +270,22 @@
     <section id="settings" class="page">
       <div class="panel settings-card">
         <div class="section-title">Printer and Safety</div>
-        <label>Printer Name <input id="printerName"></label>
+        <label>Detected Printer
+          <select id="printerSelect"></select>
+        </label>
+        <div class="row-actions">
+          <button id="refreshPrintersBtn" type="button"><svg><use href="#i-refresh"/></svg>Refresh Printers</button>
+          <span id="printerListStatus" class="muted">Choose any installed USB/Windows printer.</span>
+        </div>
+        <label>Printer Name <input id="printerName" placeholder="Manual printer name"></label>
+        <label>Printer Language
+          <select id="printerLanguage">
+            <option value="AUTO">Auto detect</option>
+            <option value="TSPL">TSPL / Xprinter / TSC</option>
+            <option value="EPL">EPL / Zebra TLP</option>
+            <option value="ZPL">ZPL / Zebra</option>
+          </select>
+        </label>
         <label>Feed Mode
           <select id="feedMode">
             <option value="SensorGap">Sensor gap (recommended)</option>

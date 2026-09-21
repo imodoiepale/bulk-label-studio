@@ -29,6 +29,7 @@ function defaultSettings() {
     pitchMm: 41.1,
     gapMm: 3,
     feedMode: 'SensorGap',
+    printerLanguage: 'AUTO',
     maxBatch: 500,
     defaultTemplate: 'Standard Receipt'
   };
@@ -50,6 +51,7 @@ function cleanSettings(settings) {
     ...settings,
     printerName: String(settings.printerName || defaults.printerName).trim() || defaults.printerName,
     feedMode: settings.feedMode || defaults.feedMode,
+    printerLanguage: String(settings.printerLanguage || defaults.printerLanguage).toUpperCase(),
     maxBatch: Number(settings.maxBatch || defaults.maxBatch)
   };
 }
@@ -315,6 +317,74 @@ function buildTspl(template, settings, rows) {
   return lines.join('\r\n') + '\r\n';
 }
 
+function printerLanguage(settings) {
+  const explicit = String(settings.printerLanguage || 'AUTO').toUpperCase();
+  if (explicit !== 'AUTO') return explicit;
+  const name = `${settings.printerName || ''} ${settings.driverName || ''}`.toLowerCase();
+  if (name.includes('zdesigner') || name.includes('zebra') || name.includes('tlp 2844')) return 'EPL';
+  return 'TSPL';
+}
+
+function buildEpl(template, settings, rows) {
+  rows = expandRows(rows);
+  const widthDots = Math.round(Number(template.widthMm || settings.labelWidthMm || 63.5) / 25.4 * 203);
+  const heightDots = Math.round(Number(template.heightMm || settings.labelHeightMm || 38.1) / 25.4 * 203);
+  const gapDots = settings.feedMode === 'SensorGap' ? Math.max(0, Math.round((Number(template.gapMm) || Number(settings.gapMm) || 3) / 25.4 * 203)) : 0;
+  const lines = [
+    'N',
+    `q${widthDots}`,
+    `Q${heightDots},${gapDots}`
+  ];
+  for (const row of rows) {
+    lines.push('N');
+    for (const el of template.elements || []) {
+      const value = String(valueForField(row, el.field, el.value)).replace(/["\r\n]/g, '');
+      const x = Math.round(el.x);
+      const y = Math.round(el.y);
+      if (el.type === 'barcode') {
+        const code = value.replace(/[^A-Za-z0-9\-.\/+% ]/g, '');
+        lines.push(`B${x},${y},0,1,${Math.max(1, Math.round(el.narrow || 2))},${Math.max(2, Math.round(el.wide || 4))},${Math.round(el.height || 72)},B,"${code}"`);
+      } else if (el.type === 'text') {
+        const scale = Math.max(1, Math.round(el.size || 1));
+        lines.push(`A${x},${y},0,3,${scale},${scale},N,"${value}"`);
+      }
+    }
+    lines.push('P1');
+  }
+  return lines.join('\r\n') + '\r\n';
+}
+
+function buildZpl(template, settings, rows) {
+  rows = expandRows(rows);
+  const widthDots = Math.round(Number(template.widthMm || settings.labelWidthMm || 63.5) / 25.4 * 203);
+  const heightDots = Math.round(Number(template.heightMm || settings.labelHeightMm || 38.1) / 25.4 * 203);
+  const lines = [];
+  for (const row of rows) {
+    lines.push('^XA', `^PW${widthDots}`, `^LL${heightDots}`, '^LH0,0');
+    for (const el of template.elements || []) {
+      const value = String(valueForField(row, el.field, el.value)).replace(/[\^~\r\n]/g, '');
+      const x = Math.round(el.x);
+      const y = Math.round(el.y);
+      if (el.type === 'barcode') {
+        const code = value.replace(/[^A-Za-z0-9\-.\/+% ]/g, '');
+        lines.push(`^FO${x},${y}^BY${Math.max(1, Math.round(el.narrow || 2))},2,${Math.round(el.height || 72)}^BCN,${Math.round(el.height || 72)},Y,N,N^FD${code}^FS`);
+      } else if (el.type === 'text') {
+        const size = Math.max(18, Math.round(16 * (Number(el.size || 1))));
+        lines.push(`^FO${x},${y}^A0N,${size},${size}^FD${value}^FS`);
+      }
+    }
+    lines.push('^XZ');
+  }
+  return lines.join('\r\n') + '\r\n';
+}
+
+function buildPrinterPayload(template, settings, rows) {
+  const language = printerLanguage(settings);
+  if (language === 'EPL') return buildEpl(template, settings, rows);
+  if (language === 'ZPL') return buildZpl(template, settings, rows);
+  return buildTspl(template, settings, rows);
+}
+
 function valueForField(row, field, fallback = '') {
   if (!row) return fallback || '';
   if (field === 'reference') return row.reference || row.product || fallback || '';
@@ -331,6 +401,27 @@ ipcMain.handle('settings:save', (_event, settings) => {
   const paths = appPaths();
   fs.writeFileSync(paths.settings, JSON.stringify(cleanSettings({ ...defaultSettings(), ...settings }), null, 2));
   return true;
+});
+
+ipcMain.handle('printer:list', async () => {
+  const ps = `
+$printers = Get-CimInstance Win32_Printer | Sort-Object Default -Descending, Name | ForEach-Object {
+  [pscustomobject]@{
+    Name = $_.Name
+    DriverName = $_.DriverName
+    PortName = $_.PortName
+    PrinterStatus = $_.PrinterStatus
+    Default = [bool]$_.Default
+    WorkOffline = [bool]$_.WorkOffline
+    IsUsb = ($_.PortName -like 'USB*')
+    IsLabelLikely = ($_.Name -match 'Xprinter|ZDesigner|Zebra|TLP|GK|GX|ZD|XP-|Label' -or $_.DriverName -match 'Xprinter|ZDesigner|Zebra|TLP|GK|GX|ZD|Label')
+  }
+}
+$printers | ConvertTo-Json -Depth 4
+`;
+  const json = await runPowerShellCommand(ps);
+  const parsed = JSON.parse(json || '[]');
+  return Array.isArray(parsed) ? parsed : parsed ? [parsed] : [];
 });
 
 ipcMain.handle('templates:list', () => {
@@ -463,7 +554,7 @@ ipcMain.handle('print:send', async (_event, { template, settings, rows, jobName 
   if (expanded.length > Number(settings.maxBatch || 500)) throw new Error(`Batch blocked: ${expanded.length} labels exceeds max batch.`);
   const bounds = validateTemplateBounds(template);
   if (bounds.length) throw new Error(`Template is outside the printable label: ${bounds.join(' ')}`);
-  const payload = buildTspl(template, settings, rows);
+  const payload = buildPrinterPayload(template, settings, rows);
   const payloadPath = path.join(os.tmpdir(), `bulk-label-${Date.now()}.txt`);
   fs.writeFileSync(payloadPath, payload, 'ascii');
   const script = isDev ? path.join(process.cwd(), 'tools', 'print-raw.ps1') : path.join(process.resourcesPath, 'app.asar.unpacked', 'tools', 'print-raw.ps1');
