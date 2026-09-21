@@ -405,7 +405,7 @@ ipcMain.handle('settings:save', (_event, settings) => {
 
 ipcMain.handle('printer:list', async () => {
   const ps = `
-$printers = Get-CimInstance Win32_Printer | Sort-Object Default -Descending, Name | ForEach-Object {
+$printers = Get-CimInstance Win32_Printer | Sort-Object @{ Expression = 'Default'; Descending = $true }, Name | ForEach-Object {
   [pscustomobject]@{
     Name = $_.Name
     DriverName = $_.DriverName
