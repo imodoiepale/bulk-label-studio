@@ -8,7 +8,8 @@ const state = {
   dragging: null,
   bulkParseTimer: null,
   bulkParseDirty: false,
-  bulkParseVersion: 0
+  bulkParseVersion: 0,
+  syncingTableToCsv: false
 };
 
 if (!window.labelStudio) {
@@ -106,6 +107,7 @@ async function init() {
   renderAll();
   await parseRows({ silent: true });
   refreshPrinterDiagnostics();
+  window.addEventListener('resize', () => drawBulkInlinePreview(state.rows));
 }
 
 function bindNav() {
@@ -192,7 +194,13 @@ function bindBulk() {
   $('importRowsBtn').addEventListener('click', importRowsFile);
   $('csvTemplateBtn').addEventListener('click', saveCsvTemplate);
   $('bulkText').addEventListener('input', scheduleBulkParse);
+  $('rowPreview').addEventListener('focusin', bulkCellFocus);
+  $('rowPreview').addEventListener('input', bulkCellInput);
+  $('rowPreview').addEventListener('keydown', bulkCellKeydown);
+  $('rowPreview').addEventListener('paste', bulkCellPaste);
+  $('rowPreview').addEventListener('focusout', bulkCellBlur);
   $('printRowsBtn').addEventListener('click', async () => {
+    commitActiveBulkCell();
     await flushBulkRows();
     if (!state.rows.length) return;
     await sendPrintWithConfirm(state.rows, 'Bulk label pasted rows');
@@ -539,6 +547,7 @@ function estimateElementBounds(el) {
 }
 
 function scheduleBulkParse() {
+  if (state.syncingTableToCsv) return;
   state.bulkParseDirty = true;
   clearTimeout(state.bulkParseTimer);
   state.bulkParseTimer = setTimeout(() => {
@@ -658,7 +667,7 @@ function rowsTable(rows) {
   const total = labelCount(rows);
   const body = rows.length ? rows.map((row, index) => `<tr>
     <td class="row-number">${index + 1}</td>
-    ${headers.map(h => `<td title="${escapeHtml(row[h] || '')}">${escapeHtml(row[h] || '')}</td>`).join('')}
+    ${headers.map(h => `<td class="editable-cell" contenteditable="plaintext-only" data-row="${index}" data-field="${h}" title="${escapeHtml(row[h] || '')}">${escapeHtml(row[h] || '')}</td>`).join('')}
   </tr>`).join('') : `<tr class="empty-row"><td class="row-number">—</td><td colspan="${headers.length}">No printable rows found. Add a barcode/code column and product rows.</td></tr>`;
   return `<div class="table-meta">${rows.length} product row(s) · ${total} label(s) queued</div>
   <table class="data-grid"><thead><tr><th class="row-number">#</th>${headers.map(h => `<th>${h}</th>`).join('')}</tr></thead><tbody>${body}</tbody></table>`;
@@ -669,9 +678,92 @@ function rowsToText(rows) {
   return [headers.join('\t'), ...(rows || []).map(row => headers.map(h => String(row[h] ?? '').replace(/\t/g, ' ')).join('\t'))].join('\n');
 }
 
+function editableBulkCell(target) {
+  return target?.closest?.('.editable-cell') || null;
+}
+
+function bulkCellFocus(event) {
+  const cell = editableBulkCell(event.target);
+  if (!cell) return;
+  cell.dataset.original = cell.textContent;
+}
+
+function bulkCellInput(event) {
+  const cell = editableBulkCell(event.target);
+  if (!cell) return;
+  syncBulkCell(cell, { normalizeDisplay: false });
+}
+
+function bulkCellBlur(event) {
+  const cell = editableBulkCell(event.target);
+  if (!cell) return;
+  syncBulkCell(cell, { normalizeDisplay: true });
+}
+
+function bulkCellKeydown(event) {
+  const cell = editableBulkCell(event.target);
+  if (!cell) return;
+  if (event.key === 'Enter') {
+    event.preventDefault();
+    syncBulkCell(cell, { normalizeDisplay: true });
+    cell.blur();
+  } else if (event.key === 'Escape') {
+    event.preventDefault();
+    cell.textContent = cell.dataset.original || '';
+    syncBulkCell(cell, { normalizeDisplay: true });
+    cell.blur();
+  }
+}
+
+function bulkCellPaste(event) {
+  const cell = editableBulkCell(event.target);
+  if (!cell) return;
+  event.preventDefault();
+  const text = (event.clipboardData || window.clipboardData).getData('text/plain').replace(/[\r\n\t]+/g, ' ');
+  document.execCommand('insertText', false, text);
+}
+
+function commitActiveBulkCell() {
+  const cell = editableBulkCell(document.activeElement);
+  if (cell) syncBulkCell(cell, { normalizeDisplay: true });
+}
+
+function syncBulkCell(cell, options = {}) {
+  const index = Number(cell.dataset.row);
+  const field = cell.dataset.field;
+  if (!Number.isInteger(index) || !field || !state.rows[index]) return;
+  const value = sanitizeCellValue(cell.textContent, field);
+  state.rows[index][field] = value;
+  if (options.normalizeDisplay) cell.textContent = value;
+  cell.title = value;
+  syncCsvFromRows();
+  updateBulkTableMeta();
+  drawBulkInlinePreview(state.rows);
+}
+
+function sanitizeCellValue(value, field) {
+  const clean = String(value || '').replace(/[\r\n\t]+/g, ' ').trim();
+  if (field !== 'quantity') return clean;
+  return String(Math.max(1, Number(clean || 1) || 1));
+}
+
+function syncCsvFromRows() {
+  state.syncingTableToCsv = true;
+  $('bulkText').value = rowsToText(state.rows);
+  state.syncingTableToCsv = false;
+}
+
+function updateBulkTableMeta() {
+  const meta = $('rowPreview').querySelector('.table-meta');
+  if (!meta) return;
+  meta.textContent = `${state.rows.length} product row(s) · ${labelCount(state.rows)} label(s) queued`;
+  setStatus(`${state.rows.length} product row(s), ${labelCount(state.rows)} label(s) ready`, 'info', { toast: false });
+}
+
 function drawBulkInlinePreview(rows) {
   const previewRows = expandRowsForPreview(rows && rows.length ? rows : [currentDesignRow()]).slice(0, 10);
-  drawLabelCardPreview(bulkInlineCanvas, bulkInlineCtx, previewRows, { cols: 2, maxScale: 0.46, title: 'Live preview' });
+  fitCanvasToContainer(bulkInlineCanvas);
+  drawLabelCardPreview(bulkInlineCanvas, bulkInlineCtx, previewRows, { cols: 2, maxScale: 0.72, sidePadding: 20, gapX: 12, gapY: 14, numberSize: 16, title: 'Live preview' });
 }
 
 function openPaperPreview(rows = null) {
@@ -690,7 +782,8 @@ function drawLabelCardPreview(targetCanvas, targetCtx, rows, options = {}) {
   const cols = Math.max(1, Number(options.cols || 2));
   const gapX = Number(options.gapX || 18);
   const gapY = Number(options.gapY || 18);
-  const scale = Math.min(Number(options.maxScale || 0.42), (targetCanvas.width - 80 - (cols - 1) * gapX) / (labelDotsW * cols));
+  const sidePadding = Number(options.sidePadding ?? 80);
+  const scale = Math.min(Number(options.maxScale || 0.42), (targetCanvas.width - sidePadding - (cols - 1) * gapX) / (labelDotsW * cols));
   const labelW = labelDotsW * scale;
   const labelH = labelDotsH * scale;
   const pitch = Math.max(pitchDots * scale, labelH + 16);
@@ -718,9 +811,16 @@ function drawLabelCardPreview(targetCanvas, targetCtx, rows, options = {}) {
     roundRect(targetCtx, x, y, labelW, labelH, 12, false, true);
     drawTemplateOnContext(targetCtx, row, x, y, scale);
     targetCtx.fillStyle = '#8a7a4a';
-    targetCtx.font = '700 12px "Segoe UI"';
-    targetCtx.fillText(`#${index + 1}`, x + labelW - 28, y + 18);
+    targetCtx.font = `800 ${Number(options.numberSize || 12)}px "Segoe UI"`;
+    targetCtx.fillText(`#${index + 1}`, x + labelW - 38, y + 22);
   });
+}
+
+function fitCanvasToContainer(targetCanvas) {
+  const parent = targetCanvas.parentElement;
+  if (!parent) return;
+  const width = Math.max(520, Math.floor(parent.clientWidth - 4));
+  if (targetCanvas.width !== width) targetCanvas.width = width;
 }
 
 function drawTemplateOnContext(targetCtx, row, offsetX, offsetY, scale) {
