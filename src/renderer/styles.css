@@ -403,11 +403,43 @@ th.row-number { z-index: 4; }
   background: #ecebe5;
   scrollbar-gutter: stable both-edges;
 }
+.preview-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.zoom-control {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 34px;
+  padding: 0 6px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel-2);
+}
+.zoom-control button {
+  height: 26px;
+  width: 28px;
+  min-width: 28px;
+  padding: 0;
+}
+.zoom-control span {
+  min-width: 42px;
+  text-align: center;
+  font-size: 12px;
+  font-weight: 650;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
 #bulkInlinePreviewCanvas {
   display: block;
   width: auto;
   min-width: 0;
   height: auto;
+  cursor: zoom-in;
 }
 
 /* Printer */

@@ -184,9 +184,17 @@
           <div class="panel-head">
             <div>
               <div class="section-title">Live Label Preview</div>
-              <p class="muted">Automatic 2-column preview from the table rows.</p>
+              <p class="muted">Automatic 2-column preview from the table rows. Click preview to expand.</p>
             </div>
-            <button id="printRowsBtn" class="primary"><svg><use href="#i-play"/></svg>Print Table Rows</button>
+            <div class="preview-actions">
+              <div class="zoom-control" aria-label="Preview zoom controls">
+                <button id="bulkZoomOutBtn" class="icon" title="Zoom out">−</button>
+                <span id="bulkZoomLabel">100%</span>
+                <button id="bulkZoomInBtn" class="icon" title="Zoom in">+</button>
+              </div>
+              <button id="expandBulkPreviewBtn" class="ghost">Expand</button>
+              <button id="printRowsBtn" class="primary"><svg><use href="#i-play"/></svg>Print Table Rows</button>
+            </div>
           </div>
           <div class="inline-preview-scroll">
             <canvas id="bulkInlinePreviewCanvas" width="760" height="620"></canvas>

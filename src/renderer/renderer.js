@@ -9,7 +9,9 @@ const state = {
   bulkParseTimer: null,
   bulkParseDirty: false,
   bulkParseVersion: 0,
-  syncingTableToCsv: false
+  syncingTableToCsv: false,
+  bulkPreviewZoom: 1,
+  bulkPreviewRaf: null
 };
 
 if (!window.labelStudio) {
@@ -107,7 +109,7 @@ async function init() {
   renderAll();
   await parseRows({ silent: true });
   refreshPrinterDiagnostics();
-  window.addEventListener('resize', () => drawBulkInlinePreview(state.rows));
+  window.addEventListener('resize', requestBulkInlinePreview);
 }
 
 function bindNav() {
@@ -120,6 +122,7 @@ function bindNav() {
       $('pageTitle').textContent = pageMeta[button.dataset.page][0];
       $('pageSub').textContent = pageMeta[button.dataset.page][1];
       $('crumbPage').textContent = button.textContent.trim();
+      if (button.dataset.page === 'bulk') requestBulkInlinePreview();
     });
   });
   $('openDataBtn').addEventListener('click', () => window.labelStudio.openData());
@@ -199,6 +202,10 @@ function bindBulk() {
   $('rowPreview').addEventListener('keydown', bulkCellKeydown);
   $('rowPreview').addEventListener('paste', bulkCellPaste);
   $('rowPreview').addEventListener('focusout', bulkCellBlur);
+  $('bulkZoomOutBtn').addEventListener('click', () => changeBulkPreviewZoom(-0.1));
+  $('bulkZoomInBtn').addEventListener('click', () => changeBulkPreviewZoom(0.1));
+  $('expandBulkPreviewBtn').addEventListener('click', () => openPaperPreview(state.rows, { expanded: true }));
+  $('bulkInlinePreviewCanvas').addEventListener('click', () => openPaperPreview(state.rows, { expanded: true }));
   $('printRowsBtn').addEventListener('click', async () => {
     commitActiveBulkCell();
     await flushBulkRows();
@@ -569,7 +576,7 @@ async function parseRows(options = {}) {
   state.rows = rows;
   state.bulkParseDirty = false;
   $('rowPreview').innerHTML = rowsTable(state.rows);
-  drawBulkInlinePreview(state.rows);
+  requestBulkInlinePreview();
   const msg = state.rows.length
     ? `${state.rows.length} product row(s), ${labelCount(state.rows)} label(s) ready`
     : analysis.note || 'No printable rows found. Check that your file has a barcode/code column.';
@@ -738,7 +745,7 @@ function syncBulkCell(cell, options = {}) {
   cell.title = value;
   syncCsvFromRows();
   updateBulkTableMeta();
-  drawBulkInlinePreview(state.rows);
+  requestBulkInlinePreview();
 }
 
 function sanitizeCellValue(value, field) {
@@ -760,27 +767,54 @@ function updateBulkTableMeta() {
   setStatus(`${state.rows.length} product row(s), ${labelCount(state.rows)} label(s) ready`, 'info', { toast: false });
 }
 
+function requestBulkInlinePreview() {
+  if (state.bulkPreviewRaf) cancelAnimationFrame(state.bulkPreviewRaf);
+  state.bulkPreviewRaf = requestAnimationFrame(() => {
+    state.bulkPreviewRaf = null;
+    drawBulkInlinePreview(state.rows);
+  });
+}
+
+function changeBulkPreviewZoom(delta) {
+  state.bulkPreviewZoom = Math.max(0.8, Math.min(1.8, Number((state.bulkPreviewZoom + delta).toFixed(2))));
+  $('bulkZoomLabel').textContent = `${Math.round(state.bulkPreviewZoom * 100)}%`;
+  requestBulkInlinePreview();
+}
+
 function drawBulkInlinePreview(rows) {
   const previewRows = expandRowsForPreview(rows && rows.length ? rows : [currentDesignRow()]).slice(0, 10);
-  fitCanvasToContainer(bulkInlineCanvas);
+  if (!fitCanvasToContainer(bulkInlineCanvas, state.bulkPreviewZoom)) return;
   drawLabelCardPreview(bulkInlineCanvas, bulkInlineCtx, previewRows, {
     cols: 2,
-    maxScale: 0.74,
-    padX: 10,
-    gapX: 8,
-    gapY: 12,
+    maxScale: 1.2,
+    padX: 8,
+    gapX: 6,
+    gapY: 10,
     cardBleed: 8,
     numberSize: 16,
     title: 'Live preview'
   });
 }
 
-function openPaperPreview(rows = null) {
+function openPaperPreview(rows = null, options = {}) {
   const validRows = Array.isArray(rows) ? rows : null;
   const sourceRows = validRows || (state.rows.length ? state.rows : [currentDesignRow()]);
   const previewRows = expandRowsForPreview(sourceRows).slice(0, 10);
-  drawLabelCardPreview(paperCanvas, paperCtx, previewRows, { cols: paperCanvas.width >= 1040 ? 5 : paperCanvas.width >= 840 ? 4 : paperCanvas.width >= 620 ? 3 : 2, maxScale: 0.36, title: 'Compact preview' });
   $('paperPreviewModal').classList.remove('hidden');
+  requestAnimationFrame(() => {
+    fitCanvasToContainer(paperCanvas, 1, { minWidth: options.expanded ? 980 : 900 });
+    const cols = options.expanded ? 2 : paperCanvas.width >= 1040 ? 5 : paperCanvas.width >= 840 ? 4 : paperCanvas.width >= 620 ? 3 : 2;
+    drawLabelCardPreview(paperCanvas, paperCtx, previewRows, {
+      cols,
+      maxScale: options.expanded ? 1.2 : 0.42,
+      padX: options.expanded ? 12 : undefined,
+      gapX: options.expanded ? 10 : undefined,
+      gapY: options.expanded ? 14 : undefined,
+      cardBleed: options.expanded ? 10 : undefined,
+      numberSize: options.expanded ? 18 : 12,
+      title: options.expanded ? 'Expanded preview' : 'Compact preview'
+    });
+  });
 }
 
 function drawLabelCardPreview(targetCanvas, targetCtx, rows, options = {}) {
@@ -830,12 +864,24 @@ function drawLabelCardPreview(targetCanvas, targetCtx, rows, options = {}) {
   });
 }
 
-function fitCanvasToContainer(targetCanvas) {
+function fitCanvasToContainer(targetCanvas, zoom = 1, options = {}) {
   const parent = targetCanvas.parentElement;
-  if (!parent) return;
-  const width = Math.max(320, Math.floor(parent.clientWidth - 2));
+  if (!parent) return false;
+  const panel = targetCanvas.closest('.panel, .modal-card');
+  const parentWidth = parent.clientWidth || parent.getBoundingClientRect().width || 0;
+  const panelWidth = panel ? (panel.clientWidth || panel.getBoundingClientRect().width || 0) - 34 : 0;
+  const baseWidth = Math.floor(Math.max(parentWidth, panelWidth));
+  if (baseWidth < 420) {
+    requestAnimationFrame(() => {
+      if (targetCanvas === bulkInlineCanvas) drawBulkInlinePreview(state.rows);
+    });
+    return false;
+  }
+  const minWidth = Number(options.minWidth || 420);
+  const width = Math.max(minWidth, Math.floor((baseWidth - 2) * Math.max(0.8, zoom)));
   if (targetCanvas.width !== width) targetCanvas.width = width;
   targetCanvas.style.width = `${width}px`;
+  return true;
 }
 
 function drawTemplateOnContext(targetCtx, row, offsetX, offsetY, scale) {
