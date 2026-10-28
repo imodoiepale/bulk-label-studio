@@ -25,17 +25,22 @@
       "target": [
         "nsis"
       ],
-      "artifactName": "Bulk-Label-Studio-Setup-${version}.${ext}"
+      "artifactName": "Bulk-Label-Studio-Setup-${version}.${ext}",
+      "icon": "src/icon.ico"
     },
     "nsis": {
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
-      "createStartMenuShortcut": true
+      "createStartMenuShortcut": true,
+      "installerIcon": "src/icon.ico",
+      "uninstallerIcon": "src/icon.ico",
+      "shortcutName": "Bulk Label Studio"
     }
   },
   "devDependencies": {
     "electron": "^44.4.1",
     "electron-builder": "^26.0.12"
-  }
+  },
+  "author": "James Epale"
 }

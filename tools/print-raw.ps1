@@ -17,12 +17,12 @@ public class BulkLabelRawSpool {
  [DllImport("winspool.drv",SetLastError=true)] static extern bool WritePrinter(IntPtr h,byte[] data,int count,out int written);
  [DllImport("winspool.drv",SetLastError=true)] static extern bool EndDocPrinter(IntPtr h);
  [DllImport("winspool.drv")] static extern bool ClosePrinter(IntPtr h);
- public static int Send(string printerName,string jobName,string text) {
+ public static int Send(string printerName,string jobName,byte[] bytes) {
   IntPtr h; if(!OpenPrinter(printerName,out h,IntPtr.Zero)) throw new Win32Exception();
   try {
    Doc doc = new Doc(); doc.name = jobName;
    int id=StartDocPrinter(h,1,doc); if(id==0) throw new Win32Exception();
-   byte[] bytes=System.Text.Encoding.ASCII.GetBytes(text); int written;
+   int written;
    if(!WritePrinter(h,bytes,bytes.Length,out written) || written!=bytes.Length) throw new Exception("Write incomplete; inspect queue before retrying.");
    if(!EndDocPrinter(h)) throw new Win32Exception();
    return id;
@@ -36,7 +36,7 @@ if (-not $printer) { throw "Printer not found: $PrinterName" }
 if ($printer.WorkOffline) { throw "Printer offline: $PrinterName" }
 if (@(Get-PrintJob -PrinterName $PrinterName -ErrorAction SilentlyContinue).Count) { throw 'Queue is not empty; clear or wait before retrying.' }
 
-$payload = Get-Content -Raw -LiteralPath $PayloadPath
+$payload = [System.IO.File]::ReadAllBytes($PayloadPath)
 $jobId = [BulkLabelRawSpool]::Send($PrinterName, $JobName, $payload)
 Write-Output $jobId
 

@@ -67,6 +67,7 @@ function createWindow() {
     minWidth: 1080,
     minHeight: 700,
     title: 'Bulk Label Studio',
+    icon: path.join(__dirname, 'icon.ico'),
     backgroundColor: '#f5f7fb',
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
@@ -76,6 +77,8 @@ function createWindow() {
   });
   win.loadFile(path.join(__dirname, 'renderer', 'index.html'));
 }
+
+app.setAppUserModelId('com.bulklabel.studio');
 
 app.whenReady().then(() => {
   seedTemplate();
@@ -214,11 +217,21 @@ function parseDelimitedLine(line, delimiter) {
   return out;
 }
 
+// Excel stores 1250.5 as 1250.4999999999998; trim float noise without touching codes or text.
+function cleanCellNumber(value) {
+  const text = String(value ?? '');
+  return /^-?\d+\.\d{8,}$/.test(text) ? String(Number(Number(text).toPrecision(12))) : text;
+}
+
 async function rowsFromWorkbook(filePath) {
   const ps = `
+$ErrorActionPreference = 'Stop'
+Add-Type -AssemblyName System.IO.Compression
 Add-Type -AssemblyName System.IO.Compression.FileSystem
 $file = $env:BULK_LABEL_IMPORT_FILE
-$zip = [System.IO.Compression.ZipFile]::OpenRead($file)
+# Share ReadWrite so a workbook that is still open in Excel can be read.
+$stream = [System.IO.File]::Open($file, 'Open', 'Read', 'ReadWrite')
+$zip = New-Object System.IO.Compression.ZipArchive($stream, [System.IO.Compression.ZipArchiveMode]::Read)
 try {
   $shared = @()
   $sharedEntry = $zip.GetEntry('xl/sharedStrings.xml')
@@ -231,8 +244,23 @@ try {
       else { $shared += '' }
     }
   }
-  $sheetEntry = $zip.GetEntry('xl/worksheets/sheet1.xml')
-  if (-not $sheetEntry) { throw 'The workbook has no first worksheet at xl/worksheets/sheet1.xml.' }
+  $wbReader = New-Object System.IO.StreamReader($zip.GetEntry('xl/workbook.xml').Open())
+  try { [xml]$wbXml = $wbReader.ReadToEnd() } finally { $wbReader.Dispose() }
+  $targets = @{}
+  $relsEntry = $zip.GetEntry('xl/_rels/workbook.xml.rels')
+  if ($relsEntry) {
+    $relReader = New-Object System.IO.StreamReader($relsEntry.Open())
+    try { [xml]$relXml = $relReader.ReadToEnd() } finally { $relReader.Dispose() }
+    foreach ($rel in $relXml.Relationships.Relationship) { $targets[[string]$rel.Id] = ([string]$rel.Target -replace '^/?xl/','') }
+  }
+  $sheets = @()
+  $n = 0
+  foreach ($sh in $wbXml.workbook.sheets.sheet) {
+    $n++
+    $rid = $sh.GetAttribute('id', 'http://schemas.openxmlformats.org/officeDocument/2006/relationships')
+    $target = if ($targets[$rid]) { $targets[$rid] } else { "worksheets/sheet$n.xml" }
+    $sheetEntry = $zip.GetEntry('xl/' + $target)
+    if (-not $sheetEntry) { continue }
   $reader = New-Object System.IO.StreamReader($sheetEntry.Open())
   try { [xml]$sheetXml = $reader.ReadToEnd() } finally { $reader.Dispose() }
   $rows = @()
@@ -261,21 +289,22 @@ try {
     if ($max -ge 0) {
       $arr = @()
       for ($i = 0; $i -le $max; $i++) { $arr += [string]$cells[$i] }
-      $rows += [pscustomobject]@{ cells = @($arr) }
+      $rows += ,@($arr)
     }
   }
-  $rows | ConvertTo-Json -Depth 6
+    $sheets += [pscustomobject]@{ name = [string]$sh.name; rows = @($rows) }
+  }
+  ConvertTo-Json -InputObject @($sheets) -Depth 6
 } finally {
   $zip.Dispose()
 }
 `;
   const json = await runPowerShellCommand(ps, { BULK_LABEL_IMPORT_FILE: filePath });
   const parsed = JSON.parse(json || '[]');
-  const objects = Array.isArray(parsed) ? parsed : [parsed];
-  const rows = objects.map(row => Array.isArray(row) ? row : row.cells).filter(Boolean);
-  if (!rows.length) return [];
-  const headers = rows[0].map(normalizeHeader);
-  return rowsFromMatrix(rows.slice(1), headers);
+  return (Array.isArray(parsed) ? parsed : [parsed]).map(sheet => {
+    const rows = (sheet.rows || []).map(r => (Array.isArray(r) ? r : [r]).map(cleanCellNumber));
+    return { name: sheet.name, rows: rows.length ? rowsFromMatrix(rows.slice(1), rows[0].map(normalizeHeader)) : [] };
+  });
 }
 
 function expandRows(rows) {
@@ -301,20 +330,31 @@ function buildTspl(template, settings, rows) {
     'SHIFT 0',
     'OFFSET 0 mm'
   ];
+  // Text arrives pre-rendered from the preview as 1-bit bitmaps so paper matches the screen; payload is binary.
+  const parts = [Buffer.from(lines.join('\r\n') + '\r\n', 'latin1')];
+  const push = line => parts.push(Buffer.from(line + '\r\n', 'latin1'));
   for (const row of rows) {
-    lines.push('CLS');
+    push('CLS');
     for (const el of template.elements || []) {
       const value = String(valueForField(row, el.field, el.value)).replace(/["\r\n]/g, '');
+      const x = Math.round(el.x);
+      const y = Math.round(el.y);
+      const bitmap = row.__bitmaps && row.__bitmaps[el.id];
       if (el.type === 'barcode') {
-        const code = value.replace(/[^A-Za-z0-9\-.\/+% ]/g, '');
-        lines.push(`BARCODE ${Math.round(el.x)},${Math.round(el.y)},"39",${Math.round(el.height || 72)},0,0,${Math.round(el.narrow || 2)},${Math.round(el.wide || 4)},"${code}"`);
+        // Code 128 forced to subset B (!104) so the printed width equals the preview; digits printed underneath.
+        const code = value.replace(/[^ -~]/g, '').replace(/!/g, '!033');
+        const narrow = Math.max(2, Math.round(el.narrow || 2));
+        push(`BARCODE ${x},${y},"128M",${Math.round(el.height || 72)},1,0,${narrow},${narrow},"!104${code}"`);
+      } else if (el.type === 'text' && bitmap) {
+        parts.push(Buffer.from(`BITMAP ${x},${y},${bitmap.widthBytes},${bitmap.height},0,`, 'latin1'), Buffer.from(bitmap.data, 'base64'), Buffer.from('\r\n', 'latin1'));
       } else if (el.type === 'text') {
-        lines.push(`TEXT ${Math.round(el.x)},${Math.round(el.y)},"2",0,${Math.round(el.size || 1)},${Math.round(el.size || 1)},"${value}"`);
+        const size = Math.max(1, Math.round(el.size || 1));
+        push(`TEXT ${x},${y},"2",0,${size},${size},"${value}"`);
       }
     }
-    lines.push('PRINT 1,1');
+    push('PRINT 1,1');
   }
-  return lines.join('\r\n') + '\r\n';
+  return Buffer.concat(parts);
 }
 
 function printerLanguage(settings) {
@@ -456,7 +496,16 @@ ipcMain.handle('rows:import', async () => {
   const ext = path.extname(filePath).toLowerCase();
   let rows;
   if (ext === '.xlsx') {
-    rows = await rowsFromWorkbook(filePath);
+    let sheets;
+    try {
+      sheets = await rowsFromWorkbook(filePath);
+    } catch (error) {
+      const text = String(error.message || error);
+      if (/being used by another process|cannot access the file/i.test(text)) throw new Error(`${path.basename(filePath)} is locked by another program. Save it in Excel and try again, or close it.`);
+      throw new Error(`Could not read ${path.basename(filePath)}: ${text.split(/\r?\n/)[0]}`);
+    }
+    const first = sheets.find(sh => sh.rows.length) || sheets[0] || { rows: [] };
+    return { filePath, rows: first.rows, sheets, sheetName: first.name };
   } else if (['.csv', '.tsv', '.txt'].includes(ext)) {
     rows = rowsFromText(fs.readFileSync(filePath, 'utf8'));
   } else {
@@ -518,7 +567,9 @@ $jobs = @(Get-PrintJob -PrinterName $printerName -ErrorAction SilentlyContinue)
 } | ConvertTo-Json -Depth 6
 `;
   const diag = JSON.parse(await runPowerShellCommand(ps, { BULK_LABEL_PRINTER_NAME: safePrinterName }));
-  return { ...diag, ...parsePrintTicket(diag.rawTicket || '') };
+  // ConvertTo-Json turns an empty queue into {} and a single job into a bare object; always hand back a list.
+  const queue = [].concat(diag.queue || []).filter(job => job && job.ID);
+  return { ...diag, queue, ...parsePrintTicket(diag.rawTicket || '') };
 });
 
 ipcMain.handle('printer:calibrate', async (_event, settings, template) => {
@@ -536,7 +587,8 @@ ipcMain.handle('printer:calibrate', async (_event, settings, template) => {
     'REFERENCE 0,0',
     'SHIFT 0',
     'OFFSET 0 mm',
-    `GAPDETECT ${heightDots},${gapDots}`,
+    // No size hints: the printer measures the real label length and gap itself (template sizes are often wrong).
+    'GAPDETECT',
     'HOME'
   ].join('\r\n') + '\r\n';
   const payloadPath = path.join(os.tmpdir(), `bulk-label-calibrate-${Date.now()}.txt`);
@@ -552,11 +604,15 @@ ipcMain.handle('print:send', async (_event, { template, settings, rows, jobName 
   if (!rows || !rows.length) throw new Error('No labels to print.');
   const expanded = expandRows(rows);
   if (expanded.length > Number(settings.maxBatch || 500)) throw new Error(`Batch blocked: ${expanded.length} labels exceeds max batch.`);
-  const bounds = validateTemplateBounds(template);
+  const bounds = validateTemplateBounds(template, rows);
   if (bounds.length) throw new Error(`Template is outside the printable label: ${bounds.join(' ')}`);
+  // Physical calibration: rolls rarely sit exactly at the head's origin, so shift every element by the saved offset.
+  const dx = Number(settings.offsetXmm || 0) / 25.4 * 203;
+  const dy = Number(settings.offsetYmm || 0) / 25.4 * 203;
+  template = { ...template, elements: (template.elements || []).map(el => ({ ...el, x: Math.max(0, el.x + dx), y: Math.max(0, el.y + dy) })) };
   const payload = buildPrinterPayload(template, settings, rows);
   const payloadPath = path.join(os.tmpdir(), `bulk-label-${Date.now()}.txt`);
-  fs.writeFileSync(payloadPath, payload, 'ascii');
+  fs.writeFileSync(payloadPath, payload, typeof payload === 'string' ? 'ascii' : undefined);
   const script = isDev ? path.join(process.cwd(), 'tools', 'print-raw.ps1') : path.join(process.resourcesPath, 'app.asar.unpacked', 'tools', 'print-raw.ps1');
   const args = ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', script, '-PrinterName', settings.printerName, '-PayloadPath', payloadPath, '-JobName', jobName || 'Bulk Label Studio'];
   const jobId = await runPowerShell(args);
@@ -595,22 +651,29 @@ function runPowerShellCommand(command, extraEnv = {}) {
   });
 }
 
-function validateTemplateBounds(template) {
+// Checks the values that will actually print (not the template's sample text) with the designer's metrics,
+// so this guard and the designer always agree.
+function validateTemplateBounds(template, rows = [{}]) {
   const widthDots = Number(template.widthMm || 63.5) / 25.4 * 203;
   const heightDots = Number(template.heightMm || 38.1) / 25.4 * 203;
-  const issues = [];
-  for (const el of template.elements || []) {
-    const estimate = estimateElementBounds(el);
-    if (estimate.x < 0 || estimate.y < 0 || estimate.x + estimate.w > widthDots || estimate.y + estimate.h > heightDots) {
-      issues.push(`${el.label || el.type} exceeds label boundary.`);
+  const issues = new Set();
+  for (const row of rows) {
+    for (const el of template.elements || []) {
+      const estimate = estimateElementBounds(el, row);
+      if (estimate.x < 0 || estimate.y < 0 || estimate.x + estimate.w > widthDots + 1 || estimate.y + estimate.h > heightDots + 1) {
+        issues.add(`${el.label || el.type} exceeds label boundary.`);
+      }
     }
   }
-  return issues;
+  return [...issues];
 }
 
-function estimateElementBounds(el) {
-  if (el.type === 'barcode') return { x: Number(el.x || 0), y: Number(el.y || 0), w: 270, h: Number(el.height || 72) };
-  return { x: Number(el.x || 0), y: Number(el.y || 0), w: Math.max(80, String(el.value || el.field || '').length * 10 * Number(el.size || 1)), h: 28 * Number(el.size || 1) };
+function estimateElementBounds(el, row = {}) {
+  const value = String(valueForField(row, el.field, el.value || '12345678'));
+  if (el.type === 'barcode') return { x: Number(el.x || 0), y: Number(el.y || 0), w: (11 * (value.length + 2) + 13) * Math.max(2, Number(el.narrow || 2)), h: Number(el.height || 72) + 24 };
+  // TSPL font "2" cell = 12 x 20 dots per size step, the same metrics the designer draws with.
+  const size = Number(el.size || 1);
+  return { x: Number(el.x || 0), y: Number(el.y || 0), w: value.length * 12 * size, h: 20 * size };
 }
 
 function parsePrintTicket(xml) {

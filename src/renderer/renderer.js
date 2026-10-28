@@ -85,6 +85,11 @@ const sample = {
   title: 'VALID FOR 3 MONTHS ONLY'
 };
 
+// The designer previews the first real table row so barcode widths and text match what actually prints.
+function previewRow() {
+  return (state.rows && state.rows[0]) || sample;
+}
+
 const PAD = 28;        // canvas margin around the label, in dots
 const DPMM = 203 / 25.4;
 const SAFE = 16;       // recommended edge margin, in dots (2 mm)
@@ -182,6 +187,10 @@ function bindDesigner() {
     if (!rows.length) return;
     await sendPrintWithConfirm(rows, 'Bulk label production batch');
   });
+  $('designerOneByOneBtn').addEventListener('click', async () => {
+    const rows = await parseDesignerRows();
+    if (rows.length) await printOneByOne(rows);
+  });
   $('closePaperPreviewBtn').addEventListener('click', () => $('paperPreviewModal').classList.add('hidden'));
   $('paperPreviewModal').addEventListener('click', event => {
     if (event.target.id === 'paperPreviewModal') $('paperPreviewModal').classList.add('hidden');
@@ -196,7 +205,7 @@ function bindDesigner() {
   });
   canvas.addEventListener('mousedown', canvasDown);
   canvas.addEventListener('mousemove', canvasMove);
-  window.addEventListener('mouseup', () => { state.dragging = null; });
+  window.addEventListener('mouseup', () => { state.dragging = null; state.resizing = null; });
 }
 
 function bindBulk() {
@@ -218,6 +227,132 @@ function bindBulk() {
     if (!state.rows.length) return;
     await sendPrintWithConfirm(state.rows, 'Bulk label pasted rows');
   });
+  $('printOneByOneBtn').addEventListener('click', async () => {
+    commitActiveBulkCell();
+    await flushBulkRows();
+    if (state.rows.length) await printOneByOne(state.rows);
+  });
+  $('sheetSelect').addEventListener('change', () => loadSheet(Number($('sheetSelect').value)));
+}
+
+// Print run panel: stays open for the whole run. Pick any label (start from the 3rd, reprint the 1st),
+// Enter prints it and moves on. Printed labels are ticked; progress survives closing for the same rows.
+function printOneByOne(rows) {
+  const labels = expandRowsForPreview(rows);
+  const key = JSON.stringify(labels);
+  if (!state.run || state.run.key !== key) state.run = { key, labels, index: 0, done: new Set(), busy: false };
+  bindRunPanel();
+  $('runModal').classList.remove('hidden');
+  renderRun();
+  $('runPrint').focus();
+}
+
+function bindRunPanel() {
+  if (state.runBound) return;
+  state.runBound = true;
+  $('runClose').addEventListener('click', closeRun);
+  $('runPrev').addEventListener('click', () => moveRun(-1));
+  $('runNext').addEventListener('click', () => moveRun(1));
+  $('runPrint').addEventListener('click', printRunLabel);
+  $('runList').addEventListener('click', event => {
+    const item = event.target.closest('li[data-i]');
+    if (item) goRun(Number(item.dataset.i));
+  });
+  document.addEventListener('keydown', event => {
+    if ($('runModal').classList.contains('hidden')) return;
+    if (event.key === 'Escape') closeRun();
+    else if (event.key === 'ArrowLeft') moveRun(-1);
+    else if (event.key === 'ArrowRight') moveRun(1);
+    else if (event.key === 'Enter') { event.preventDefault(); printRunLabel(); }
+  });
+}
+
+function closeRun() {
+  if (state.run?.busy) return;
+  $('runModal').classList.add('hidden');
+  setStatus(`Print run paused: ${state.run.done.size} of ${state.run.labels.length} printed`, 'info');
+}
+
+function goRun(index) {
+  const run = state.run;
+  if (run.busy) return;
+  run.index = Math.min(run.labels.length - 1, Math.max(0, index));
+  renderRun();
+}
+
+function moveRun(step) { goRun(state.run.index + step); }
+
+function runLabelText(row) {
+  return [...new Set([row.code, row.product, row.reference].filter(Boolean))].join(' · ');
+}
+
+function renderRun(message, kind = '') {
+  const run = state.run;
+  const row = run.labels[run.index];
+  const total = run.labels.length;
+  $('runTitle').textContent = `Label ${run.index + 1} of ${total}`;
+  $('runDone').textContent = run.done.size;
+  $('runTotal').textContent = total;
+  $('runBar').style.width = `${(run.done.size / total) * 100}%`;
+  $('runPrev').disabled = run.busy || run.index === 0;
+  $('runNext').disabled = run.busy || run.index === total - 1;
+  $('runPrint').disabled = run.busy;
+  $('runPrint').querySelector('span').textContent = run.busy ? 'Printing…' : run.done.has(run.index) ? 'Reprint' : 'Print';
+  $('runMsg').textContent = message || 'Enter prints · ← → move · click any label to jump';
+  $('runMsg').className = `run-msg ${kind}`;
+  $('runMeta').innerHTML = [row.code, row.amount].filter(Boolean).map(v => `<span>${escapeHtml(v)}</span>`).join('') +
+    (run.done.has(run.index) ? '<span class="ok">✓ Printed</span>' : '');
+  $('runList').innerHTML = run.labels.map((r, i) => `<li data-i="${i}" class="${i === run.index ? 'current' : ''} ${run.done.has(i) ? 'done' : ''}">
+    <span class="n">${i + 1}</span><span class="t">${escapeHtml(runLabelText(r) || `Label ${i + 1}`)}<small>${escapeHtml(r.amount || '')}</small></span><span class="s">✓</span></li>`).join('');
+  $('runList').querySelector('li.current')?.scrollIntoView({ block: 'nearest' });
+  drawRunPreview(row);
+}
+
+function drawRunPreview(row) {
+  const c = $('runCanvas');
+  const g = c.getContext('2d');
+  const w = mmToDots(state.template.widthMm || 58);
+  const h = mmToDots(state.template.heightMm || 40);
+  const scale = Math.min((c.width - 24) / w, (c.height - 24) / h);
+  const ox = (c.width - w * scale) / 2;
+  const oy = (c.height - h * scale) / 2;
+  g.clearRect(0, 0, c.width, c.height);
+  g.fillStyle = '#ffffff';
+  roundRect(g, ox, oy, w * scale, h * scale, 12, true, false);
+  drawTemplateOnContext(g, row, ox, oy, scale);
+}
+
+async function printRunLabel() {
+  const run = state.run;
+  if (run.busy) return;
+  const index = run.index;
+  run.busy = true;
+  renderRun(`Printing label ${index + 1}…`);
+  readSettingsForm();
+  readTemplateForm();
+  try {
+    await ensureCalibrated();
+    await window.labelStudio.print({ template: state.template, settings: state.settings, rows: withTextBitmaps([{ ...run.labels[index], quantity: 1, qty: 1, copies: 1 }]), jobName: `Label ${index + 1}/${run.labels.length}` });
+    run.done.add(index);
+    run.busy = false;
+    const allDone = run.done.size === run.labels.length;
+    if (!allDone && index < run.labels.length - 1) run.index = index + 1;
+    renderRun(allDone ? `All ${run.labels.length} labels printed ✓` : `Label ${index + 1} printed ✓`, 'ok');
+    setStatus(`Printed ${run.done.size} of ${run.labels.length}`, 'ok');
+  } catch (error) {
+    run.busy = false;
+    renderRun(`Label ${index + 1} failed: ${String(error.message || error).replace(/^Error invoking remote method '[^']+': (Error: )?/, '')}`, 'error');
+  }
+}
+
+async function loadSheet(index) {
+  const sheet = (state.sheets || [])[index];
+  if (!sheet) return;
+  state.rows = sheet.rows || [];
+  $('rowPreview').innerHTML = rowsTable(state.rows);
+  $('bulkText').value = rowsToText(state.rows);
+  await parseRows({ silent: true });
+  setStatus(`Sheet "${sheet.name}": ${state.rows.length} row(s), ${labelCount(state.rows)} label(s)`, 'ok');
 }
 
 function bindPrinter() {
@@ -280,6 +415,8 @@ function fillSettings() {
   $('printerLanguage').value = state.settings.printerLanguage || 'AUTO';
   $('feedMode').value = state.settings.feedMode;
   $('maxBatch').value = state.settings.maxBatch;
+  $('offsetXmm').value = state.settings.offsetXmm || 0;
+  $('offsetYmm').value = state.settings.offsetYmm || 0;
   renderPrinterSelects();
 }
 
@@ -288,6 +425,8 @@ function readSettingsForm() {
   state.settings.printerLanguage = $('printerLanguage').value || 'AUTO';
   state.settings.feedMode = $('feedMode').value;
   state.settings.maxBatch = Number($('maxBatch').value || 500);
+  state.settings.offsetXmm = Number($('offsetXmm').value || 0);
+  state.settings.offsetYmm = Number($('offsetYmm').value || 0);
   $('printerName').value = state.settings.printerName;
 }
 
@@ -347,10 +486,12 @@ function selectPrinterByName(name, options = {}) {
 }
 
 async function selectPrinter(printer, options = {}) {
+  // Auto-detect writes the detected language into the dropdown, so a new printer must re-detect or it inherits the old one's language.
+  const changed = printer.Name && printer.Name !== state.settings.printerName;
   state.settings.printerName = printer.Name || state.settings.printerName;
   state.settings.driverName = printer.DriverName || '';
   $('printerName').value = state.settings.printerName;
-  if (($('printerLanguage').value || 'AUTO') === 'AUTO') {
+  if (changed || ($('printerLanguage').value || 'AUTO') === 'AUTO') {
     state.settings.printerLanguage = autoPrinterLanguage(printer);
     $('printerLanguage').value = state.settings.printerLanguage;
   } else {
@@ -404,10 +545,10 @@ function fillElementForm() {
   $('elLabel').value = el.label || '';
   $('elType').value = el.type;
   $('elField').value = el.field || 'title';
-  $('elX').value = Math.round(el.x || 0);
-  $('elY').value = Math.round(el.y || 0);
-  $('elSize').value = el.size || 1;
-  $('elHeight').value = el.height || 70;
+  $('elX').value = dotsToMm(el.x);
+  $('elY').value = dotsToMm(el.y);
+  $('elSize').value = Math.round((el.size || 1) * 10) / 10;
+  $('elHeight').value = dotsToMm(el.height || 70);
   $('elValue').value = el.value || '';
 }
 
@@ -416,10 +557,10 @@ function readElementForm() {
   if (!el) return;
   el.label = $('elLabel').value;
   el.field = $('elField').value;
-  el.x = Number($('elX').value || 0);
-  el.y = Number($('elY').value || 0);
-  el.size = Number($('elSize').value || 1);
-  el.height = Number($('elHeight').value || 70);
+  el.x = mmToDots($('elX').value);
+  el.y = mmToDots($('elY').value);
+  el.size = Math.max(0.5, Number($('elSize').value || 1));
+  el.height = Math.max(8, mmToDots($('elHeight').value || 9));
   el.value = $('elValue').value;
   renderAll();
 }
@@ -478,13 +619,13 @@ function drawCanvas() {
   ctx.strokeRect(SAFE, SAFE, labelW - SAFE * 2, labelHeight - SAFE * 2);
   ctx.setLineDash([]);
   for (const el of state.template.elements || []) {
-    const value = valueForField(sample, el.field, el.value);
+    const value = valueForField(previewRow(), el.field, el.value);
     const selected = el.id === state.selectedId;
     const b = estimateElementBounds(el);
     const outside = b.x < 0 || b.y < 0 || b.x + b.w > labelW || b.y + b.h > labelHeight;
     ctx.fillStyle = INK;
     if (el.type === 'barcode') {
-      drawFakeBarcode(el.x, el.y, b.w, el.height || 72, value);
+      drawBarcodeOn(ctx, el.x, el.y, b.w, el.height || 72, value);
     } else {
       drawTspText(ctx, value, el.x, el.y, el.size || 1);
     }
@@ -494,6 +635,10 @@ function drawCanvas() {
       ctx.fillStyle = outside ? 'rgba(194, 65, 59, .08)' : 'rgba(201, 162, 74, .10)';
       roundRect(ctx, b.x - 4, b.y - 4, b.w + 8, b.h + 8, 4, true, true);
       ctx.lineWidth = 1;
+      if (selected) {
+        ctx.fillStyle = '#c9a24a';
+        ctx.fillRect(b.x + b.w - HANDLE / 2, b.y + b.h - HANDLE / 2, HANDLE, HANDLE);
+      }
     }
   }
   ctx.strokeStyle = '#c9a24a';
@@ -520,18 +665,62 @@ function drawTspText(targetCtx, value, x, y, size, scale = 1) {
   targetCtx.restore();
 }
 
-function drawFakeBarcode(x, y, w, h, text) {
-  ctx.fillStyle = INK;
-  let cursor = x;
-  for (let i = 0; cursor < x + w; i++) {
-    const bar = (text.charCodeAt(i % text.length) + i) % 4 + 1;
-    if (i % 2 === 0) ctx.fillRect(cursor, y, bar, h);
-    cursor += bar + 2;
+const HANDLE = 14;
+
+function onResizeHandle(el, point) {
+  if (!el) return false;
+  const b = estimateElementBounds(el);
+  return Math.abs(point.x - (b.x + b.w)) <= HANDLE && Math.abs(point.y - (b.y + b.h)) <= HANDLE;
+}
+
+// Renders each text element exactly as the preview draws it (1 px = 1 printer dot) into TSPL BITMAP data,
+// so the printer reproduces the screen instead of substituting its own fonts. TSPL bitmaps: bit 0 = black.
+function textBitmap(value, size) {
+  const text = String(value);
+  const w = Math.max(1, Math.ceil(12 * size * text.length));
+  const h = Math.max(1, Math.ceil(20 * size));
+  const off = document.createElement('canvas');
+  off.width = w;
+  off.height = h;
+  const c = off.getContext('2d');
+  c.fillStyle = INK;
+  drawTspText(c, text, 0, 0, size);
+  const pixels = c.getImageData(0, 0, w, h).data;
+  const widthBytes = Math.ceil(w / 8);
+  const bytes = new Uint8Array(widthBytes * h).fill(0xff);
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      if (pixels[(y * w + x) * 4 + 3] > 110) bytes[y * widthBytes + (x >> 3)] &= ~(0x80 >> (x & 7));
+    }
   }
+  let binary = '';
+  bytes.forEach(b => { binary += String.fromCharCode(b); });
+  return { data: btoa(binary), widthBytes, height: h };
+}
+
+function withTextBitmaps(rows) {
+  const cache = new Map();
+  return rows.map(row => {
+    const bitmaps = {};
+    for (const el of state.template.elements || []) {
+      if (el.type !== 'text') continue;
+      const value = String(valueForField(row, el.field, el.value));
+      const key = `${el.size || 1}|${value}`;
+      if (!cache.has(key)) cache.set(key, textBitmap(value, Number(el.size || 1)));
+      bitmaps[el.id] = cache.get(key);
+    }
+    return { ...row, __bitmaps: bitmaps };
+  });
 }
 
 function canvasDown(event) {
   const point = canvasPoint(event);
+  const current = selectedElement();
+  if (onResizeHandle(current, point)) {
+    const b = estimateElementBounds(current);
+    state.resizing = { id: current.id, w: b.w, h: b.h, size: current.size || 1, height: current.height || 72, narrow: current.narrow || 2, px: point.x, py: point.y };
+    return;
+  }
   const hit = [...state.template.elements].reverse().find(el => {
     const b = estimateElementBounds(el);
     return point.x >= b.x - 8 && point.x <= b.x + b.w + 8 && point.y >= b.y - 8 && point.y <= b.y + b.h + 8;
@@ -547,12 +736,27 @@ function canvasDown(event) {
 }
 
 function canvasMove(event) {
-  if (!state.dragging) return;
   const point = canvasPoint(event);
+  if (state.resizing) {
+    const r = state.resizing;
+    const el = selectedElement();
+    if (!el) return;
+    if (el.type === 'barcode') {
+      // Height is free; width can only step in whole printer dots per bar (Code 128 module).
+      el.height = Math.max(24, Math.round(r.height + point.y - r.py));
+      el.narrow = Math.min(6, Math.max(2, Math.round(r.narrow * (r.w + point.x - r.px) / r.w)));
+    } else {
+      el.size = Math.max(0.5, Math.round(r.size * Math.max((r.h + point.y - r.py) / r.h, 0.1) * 10) / 10);
+    }
+    renderAll();
+    return;
+  }
+  canvas.style.cursor = onResizeHandle(selectedElement(), point) ? 'nwse-resize' : '';
+  if (!state.dragging) return;
   const el = selectedElement();
   if (!el) return;
-  el.x = Math.max(0, Math.round(point.x - state.dragging.dx));
-  el.y = Math.max(0, Math.round(point.y - state.dragging.dy));
+  el.x = Math.max(0, point.x - state.dragging.dx);
+  el.y = Math.max(0, point.y - state.dragging.dy);
   renderAll();
 }
 
@@ -575,11 +779,29 @@ async function printTest() {
   await sendPrintWithConfirm([sample], 'Bulk label test');
 }
 
+// First print to a TSPL printer each session: let it measure the real label/gap itself, then wait for the
+// calibration job to leave the queue (print-raw refuses a busy queue).
+async function ensureCalibrated() {
+  const name = state.settings.printerName;
+  const language = String(state.settings.printerLanguage || 'AUTO').toUpperCase();
+  if (state.calibratedFor === name || (language === 'AUTO' ? autoPrinterLanguage({ Name: name, DriverName: state.settings.driverName }) : language) !== 'TSPL') return;
+  setStatus('Measuring label size on the printer…', 'info');
+  await window.labelStudio.calibratePrinter(state.settings, state.template);
+  const deadline = Date.now() + 10000;
+  while (Date.now() < deadline) {
+    if (!(await window.labelStudio.getPrinterDiagnostics(name)).queue.length) break;
+    await new Promise(r => setTimeout(r, 500));
+  }
+  state.calibratedFor = name;
+  setStatus('Label measured. Printing…', 'info');
+}
+
 async function sendPrint(rows, jobName) {
   try {
     readSettingsForm();
     readTemplateForm();
-    const result = await window.labelStudio.print({ template: state.template, settings: state.settings, rows, jobName });
+    await ensureCalibrated();
+    const result = await window.labelStudio.print({ template: state.template, settings: state.settings, rows: withTextBitmaps(rows), jobName });
     setStatus(`Sent to printer · job ${result.jobId}`, 'ok');
   } catch (error) {
     setStatus(error.message || String(error), 'error');
@@ -631,15 +853,14 @@ function autoFitTemplate() {
   }
 }
 
-function estimateElementBounds(el) {
+function estimateElementBounds(el, row = previewRow()) {
   if (el.type === 'barcode') {
-    // Code 39: (value + start/stop) chars × (6 narrow + 3 wide + 1 narrow gap)
-    const code = String(valueForField(sample, el.field, el.value || '12345678'));
-    const narrow = Number(el.narrow || 2);
-    const wide = Number(el.wide || 4);
-    return { x: Number(el.x || 0), y: Number(el.y || 0), w: (code.length + 2) * (7 * narrow + 3 * wide), h: Number(el.height || 72) };
+    // Code 128B: 11 modules per char + start + check, 13 for stop; +24 dots for the printed digits.
+    const code = String(valueForField(row, el.field, el.value || '12345678'));
+    const narrow = Math.max(2, Number(el.narrow || 2));
+    return { x: Number(el.x || 0), y: Number(el.y || 0), w: (11 * (code.length + 2) + 13) * narrow, h: Number(el.height || 72) + 24 };
   }
-  const value = valueForField(sample, el.field, el.value || el.label || '');
+  const value = valueForField(row, el.field, el.value || el.label || '');
   return { x: Number(el.x || 0), y: Number(el.y || 0), w: String(value).length * 12 * Number(el.size || 1), h: 20 * Number(el.size || 1) };
 }
 
@@ -667,6 +888,7 @@ async function parseRows(options = {}) {
   state.bulkParseDirty = false;
   $('rowPreview').innerHTML = rowsTable(state.rows);
   requestBulkInlinePreview();
+  drawCanvas();
   const msg = state.rows.length
     ? `${state.rows.length} product row(s), ${labelCount(state.rows)} label(s) ready`
     : analysis.note || 'No printable rows found. Check that your file has a barcode/code column.';
@@ -694,6 +916,11 @@ async function importRowsFile() {
   try {
     const result = await window.labelStudio.importRows();
     if (!result) return;
+    state.sheets = result.sheets || [];
+    const select = $('sheetSelect');
+    select.innerHTML = state.sheets.map((sh, i) => `<option value="${i}">${escapeHtml(sh.name)} (${sh.rows.length})</option>`).join('');
+    select.classList.toggle('hidden', state.sheets.length < 2);
+    select.value = String(Math.max(0, state.sheets.findIndex(sh => sh.name === result.sheetName)));
     state.rows = result.rows || [];
     $('rowPreview').innerHTML = rowsTable(state.rows);
     $('bulkText').value = rowsToText(state.rows);
@@ -749,6 +976,7 @@ async function parseDesignerRows() {
   const rows = await window.labelStudio.parseRows($('designerBulkText').value);
   state.rows = rows;
   $('designerRowPreview').innerHTML = rowsTable(rows);
+  drawCanvas();
   $('productionSummary').textContent = `${rows.length} row(s), ${labelCount(rows)} label(s) ready`;
   setStatus(`${rows.length} row(s), ${labelCount(rows)} label(s) ready`);
   return rows;
@@ -981,22 +1209,38 @@ function drawTemplateOnContext(targetCtx, row, offsetX, offsetY, scale) {
     const y = offsetY + el.y * scale;
     targetCtx.fillStyle = INK;
     if (el.type === 'barcode') {
-      drawFakeBarcodeOn(targetCtx, x, y, estimateElementBounds(el).w * scale, (el.height || 72) * scale, value);
+      drawBarcodeOn(targetCtx, x, y, estimateElementBounds(el, row).w * scale, (el.height || 72) * scale, value);
     } else {
       drawTspText(targetCtx, value, x, y, el.size || 1, scale);
     }
   }
 }
 
-function drawFakeBarcodeOn(targetCtx, x, y, w, h, text) {
+const CODE128 = '212222 222122 222221 121223 121322 131222 122213 122312 132212 221213 221312 231212 112232 122132 122231 113222 123122 123221 223211 221132 221231 213212 223112 312131 311222 321122 321221 312212 322112 322211 212123 212321 232121 111323 131123 131321 112313 132113 132311 211313 231113 231311 112133 112331 132131 113123 113321 133121 313121 211331 231131 213113 213311 213131 311123 311321 331121 312113 312311 332111 314111 221411 431111 111224 111422 121124 121421 141122 141221 112214 112412 122114 122411 142112 142211 241211 221114 413111 241112 134111 111242 121142 121241 114212 124112 124211 411212 421112 421211 212141 214121 412121 111143 111341 131141 114113 114311 411113 411311 113141 114131 311141 411131 211412 211214 211232 2331112'.split(' ');
+
+// Real Code 128B bar widths (bar, space, bar, ...) so the preview matches the printed symbol.
+function code128Widths(text) {
+  const codes = [104, ...[...text].map(ch => Math.min(94, Math.max(0, ch.charCodeAt(0) - 32)))];
+  const check = codes.reduce((sum, c, i) => sum + c * (i || 1), 0) % 103;
+  return [...codes, check, 106].flatMap(c => [...CODE128[c]].map(Number));
+}
+
+function drawBarcodeOn(targetCtx, x, y, w, h, text) {
+  const safeText = String(text || '12345678').replace(/[^ -~]/g, '');
+  const widths = code128Widths(safeText);
+  const unit = w / widths.reduce((a, b) => a + b, 0);
   targetCtx.fillStyle = INK;
   let cursor = x;
-  const safeText = text || '12345678';
-  for (let i = 0; cursor < x + w; i++) {
-    const bar = ((safeText.charCodeAt(i % safeText.length) + i) % 4 + 1) * 1.1;
-    if (i % 2 === 0) targetCtx.fillRect(cursor, y, bar, h);
-    cursor += bar + 2.2;
-  }
+  widths.forEach((width, i) => {
+    if (i % 2 === 0) targetCtx.fillRect(cursor, y, width * unit, h);
+    cursor += width * unit;
+  });
+  targetCtx.font = `${Math.max(8, Math.round(h * 0.28))}px monospace`;
+  targetCtx.textAlign = 'center';
+  targetCtx.textBaseline = 'top';
+  targetCtx.fillText(safeText, x + w / 2, y + h + 2);
+  targetCtx.textAlign = 'left';
+  targetCtx.textBaseline = 'alphabetic';
 }
 
 async function renderAssets() {
@@ -1040,8 +1284,9 @@ async function calibratePrinter() {
       <p>The printer will feed a few blank labels while it measures the gap.</p>`, 'Calibrate');
     if (!ok) return;
     const result = await window.labelStudio.calibratePrinter(state.settings, state.template);
+    state.calibratedFor = state.settings.printerName;
     await refreshPrinterDiagnostics();
-    setStatus(`Calibrated (job ${result.jobId}, ${result.heightDots} + ${result.gapDots} dots). Next: print 5 test labels.`, 'ok');
+    setStatus(`Calibrated (job ${result.jobId}): the printer measured the label and gap itself. Next: print 1 test label.`, 'ok');
   } catch (error) {
     setStatus(error.message || String(error), 'error');
   }
@@ -1224,6 +1469,10 @@ function updateDesignCopySummary() {
 
 function mmToDots(mm) {
   return Number(mm || 0) / 25.4 * 203;
+}
+
+function dotsToMm(dots) {
+  return Math.round(Number(dots || 0) / 203 * 25.4 * 10) / 10;
 }
 
 function roundRect(targetCtx, x, y, width, height, radius, fill, stroke) {

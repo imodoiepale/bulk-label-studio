@@ -121,6 +121,7 @@
 12345678	CU10000 - 094	KES 10,000/-	VALID FOR 3 MONTHS ONLY	5</textarea>
             <div class="row-actions">
               <button id="designerParseRowsBtn"><svg><use href="#i-eye"/></svg>Preview Rows</button>
+              <button id="designerOneByOneBtn"><svg><use href="#i-play"/></svg>One by One</button>
               <button id="designerPrintRowsBtn" class="primary"><svg><use href="#i-play"/></svg>Print These Rows</button>
             </div>
             <div id="designerRowPreview" class="table-preview compact"></div>
@@ -141,10 +142,10 @@
             </select>
           </label>
           <div class="grid-2">
-            <label>X <span class="unit"><input id="elX" type="number"><i>dots</i></span></label>
-            <label>Y <span class="unit"><input id="elY" type="number"><i>dots</i></span></label>
-            <label>Size <input id="elSize" type="number" min="1"></label>
-            <label>Height <span class="unit"><input id="elHeight" type="number" min="10"><i>dots</i></span></label>
+            <label>X <span class="unit"><input id="elX" type="number" step="0.1" min="0"><i>mm</i></span></label>
+            <label>Y <span class="unit"><input id="elY" type="number" step="0.1" min="0"><i>mm</i></span></label>
+            <label>Size <input id="elSize" type="number" step="0.1" min="0.5"></label>
+            <label>Height <span class="unit"><input id="elHeight" type="number" step="0.1" min="1"><i>mm</i></span></label>
           </div>
           <label>Default Value <input id="elValue"></label>
           <button id="deleteElementBtn" class="danger"><svg><use href="#i-trash"/></svg>Delete Element</button>
@@ -164,6 +165,7 @@
             <div class="row-actions">
               <button id="csvTemplateBtn"><svg><use href="#i-save"/></svg>CSV / Excel Template</button>
               <button id="importRowsBtn"><svg><use href="#i-folder"/></svg>Upload Excel/CSV</button>
+              <select id="sheetSelect" class="hidden" title="Excel sheet"></select>
             </div>
           </div>
           <div id="rowPreview" class="table-preview"><div class="empty">Loading product rows…</div></div>
@@ -193,6 +195,7 @@
                 <button id="bulkZoomInBtn" class="icon" title="Zoom in">+</button>
               </div>
               <button id="expandBulkPreviewBtn" class="ghost">Expand</button>
+              <button id="printOneByOneBtn"><svg><use href="#i-play"/></svg>One by One</button>
               <button id="printRowsBtn" class="primary"><svg><use href="#i-play"/></svg>Print Table Rows</button>
             </div>
           </div>
@@ -293,6 +296,8 @@
           </select>
         </label>
         <label>Max Batch <input id="maxBatch" type="number"></label>
+        <label>Print offset → right (mm) <input id="offsetXmm" type="number" step="0.1" value="0" title="Negative moves the print left"></label>
+        <label>Print offset ↓ down (mm) <input id="offsetYmm" type="number" step="0.1" value="0" title="Negative moves the print up"></label>
         <button id="saveSettingsBtn" class="primary"><svg><use href="#i-save"/></svg>Save Settings</button>
       </div>
     </section>
@@ -308,6 +313,35 @@
         </div>
         <div class="paper-canvas-scroll">
           <canvas id="paperPreviewCanvas" width="1100" height="920"></canvas>
+        </div>
+      </div>
+    </div>
+
+    <div class="modal hidden" id="runModal">
+      <div class="modal-card run-card" role="dialog" aria-labelledby="runTitle">
+        <div class="run-head">
+          <div>
+            <span class="run-kicker">Print run</span>
+            <h3 id="runTitle">Label 1 of 1</h3>
+          </div>
+          <div class="run-stats"><b id="runDone">0</b><span>/ <i id="runTotal">0</i> printed</span></div>
+          <button id="runClose" class="icon" title="Close (Esc). Progress is kept."><svg><use href="#i-x"/></svg></button>
+        </div>
+        <div class="run-progress"><span id="runBar"></span></div>
+        <div class="run-body">
+          <div class="run-stage">
+            <canvas id="runCanvas" width="520" height="360"></canvas>
+            <div id="runMeta" class="run-meta"></div>
+          </div>
+          <ol id="runList" class="run-list" aria-label="Labels in this run"></ol>
+        </div>
+        <div class="run-foot">
+          <span id="runMsg" class="run-msg">Enter prints · ← → move · click any label to jump</span>
+          <div class="row-actions">
+            <button id="runPrev" title="Previous label (←)">‹ Back</button>
+            <button id="runNext" title="Skip to next label (→)">Skip ›</button>
+            <button id="runPrint" class="primary"><svg><use href="#i-play"/></svg><span>Print</span></button>
+          </div>
         </div>
       </div>
     </div>

@@ -1,0 +1,56 @@
+﻿--- src/renderer/renderer.js
++++ src/renderer/renderer.js
+@@ -341,12 +341,33 @@
+ }
+ 
+ async function selectPrinter(printer, options = {}) {
++  if (state.settings.printerName && state.template) {
++    state.settings.printerProfiles = state.settings.printerProfiles || {};
++    state.settings.printerProfiles[state.settings.printerName] = {
++      widthMm: state.template.widthMm,
++      heightMm: state.template.heightMm,
++      pitchMm: state.template.pitchMm,
++      gapMm: state.template.gapMm,
++      feedMode: state.settings.feedMode,
++      printerLanguage: state.settings.printerLanguage
++    };
++  }
++
+   state.settings.printerName = printer.Name || state.settings.printerName;
+   state.settings.driverName = printer.DriverName || '';
+   printerName.value = state.settings.printerName;
+-  if ((printerLanguage.value || 'AUTO') === 'AUTO') {
+-    state.settings.printerLanguage = autoPrinterLanguage(printer);
+-    printerLanguage.value = state.settings.printerLanguage;
+-  } else {
+-    state.settings.printerLanguage = printerLanguage.value;
++
++  const profile = (state.settings.printerProfiles || {})[state.settings.printerName];
++  if (profile) {
++    if (state.template) {
++      state.template.widthMm = profile.widthMm || state.template.widthMm;
++      state.template.heightMm = profile.heightMm || state.template.heightMm;
++      state.template.pitchMm = profile.pitchMm || state.template.pitchMm;
++      state.template.gapMm = profile.gapMm || state.template.gapMm;
++      fillTemplateForm();
++      window.labelStudio.saveTemplate(state.template);
++    }
++    state.settings.feedMode = profile.feedMode || state.settings.feedMode;
++    state.settings.printerLanguage = profile.printerLanguage || state.settings.printerLanguage;
++    feedMode.value = state.settings.feedMode;
++    printerLanguage.value = state.settings.printerLanguage;
++  } else {
++    if ((printerLanguage.value || 'AUTO') === 'AUTO') {
++      state.settings.printerLanguage = autoPrinterLanguage(printer);
++      printerLanguage.value = state.settings.printerLanguage;
++    } else {
++      state.settings.printerLanguage = printerLanguage.value;
++    }
+   }
+   renderPrinterSelects();
+   setPrinterCard(!printer.WorkOffline, printer.PortName || printer.Name || 'Selected');
+   if (options.save) await window.labelStudio.saveSettings(state.settings);
+   if (options.refreshDiagnostics) await refreshPrinterDiagnostics();
++  renderAll();
+ }
+ 
